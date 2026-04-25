@@ -1,7 +1,11 @@
 """
 CCDT Layer-4 Co-Pilot — FastAPI Server + Google GenAI SDK (google.genai)
-NOTE: Uses the NEW google.genai package, NOT the deprecated google.generativeai.
-      requirements.txt must have: google-genai>=1.0.0
+Uses the NEW google.genai package. requirements.txt must have: google-genai>=1.0.0
+
+Model fallback chain (in order):
+  gemini-2.5-flash  →  gemini-2.0-flash  →  gemini-2.0-flash-lite
+If the primary model is 429-rate-limited or 404-not-found, the next model
+in the chain is tried automatically. Each attempt uses exponential backoff.
 """
 from __future__ import annotations
 
@@ -22,7 +26,6 @@ from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_
 from pydantic import BaseModel, Field
 from starlette.responses import PlainTextResponse
 
-# ── New SDK ───────────────────────────────────────────────────────────────────
 from google import genai
 from google.genai import types as gtypes
 
@@ -33,10 +36,23 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 
 # ─── Configuration ─────────────────────────────────────────────────────────────
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-# Strip accidental "models/" prefix that env vars sometimes contain
-_raw_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-GEMINI_MODEL = _raw_model[len(
+
+# Primary model from env — strip accidental "models/" prefix
+_raw_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+PRIMARY_MODEL = _raw_model[len(
     "models/"):] if _raw_model.startswith("models/") else _raw_model
+
+# Fallback chain — tried in order if primary returns 429 or 404
+_FALLBACK_CHAIN = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+]
+# Build final model list: primary first, then the rest of the chain (deduped)
+MODEL_CHAIN: list[str] = [PRIMARY_MODEL] + [
+    m for m in _FALLBACK_CHAIN if m != PRIMARY_MODEL
+]
+
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2048"))
 MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "20"))
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
@@ -90,7 +106,7 @@ SAFETY_SETTINGS = [
         category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
 ]
 
-# ─── Tool definitions (google.genai format) ───────────────────────────────────
+# ─── Tool definitions ─────────────────────────────────────────────────────────
 TOOLS = [
     gtypes.Tool(
         function_declarations=[
@@ -168,7 +184,6 @@ TOOLS = [
 
 
 def _make_config(*, with_tools: bool = True) -> gtypes.GenerateContentConfig:
-    """Shared generation config — optionally includes tools."""
     return gtypes.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
         temperature=0.2,
@@ -178,6 +193,44 @@ def _make_config(*, with_tools: bool = True) -> gtypes.GenerateContentConfig:
         safety_settings=SAFETY_SETTINGS,
         tools=TOOLS if with_tools else [],
     )
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Return True if the error is a transient 429 rate-limit."""
+    return "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
+
+
+def _is_not_found(exc: Exception) -> bool:
+    """Return True if the model name is invalid (404 / NOT_FOUND)."""
+    return "404" in str(exc) or "NOT_FOUND" in str(exc)
+
+
+async def _call_with_retry(
+    fn,
+    *,
+    max_retries: int = 3,
+    base_delay:  float = 2.0,
+) -> Any:
+    """
+    Call an async callable with exponential back-off on 429.
+    Raises the last exception if all retries are exhausted.
+    """
+    last_exc: Exception = RuntimeError("No attempts made")
+    for attempt in range(max_retries):
+        try:
+            return await fn()
+        except Exception as exc:
+            last_exc = exc
+            if _is_retryable(exc):
+                wait = base_delay ** attempt   # 1s, 2s, 4s
+                logger.warning(
+                    "Rate-limited (429) — retrying in %.1fs (attempt %d/%d)",
+                    wait, attempt + 1, max_retries,
+                )
+                await asyncio.sleep(wait)
+            else:
+                raise  # non-retryable — propagate immediately
+    raise last_exc
 
 
 # ─── Tool executor ───────────────────────────────────────────────────────────────
@@ -263,14 +316,13 @@ class CCDTCoPilot:
     def __init__(self, context_builder: ClusterContextBuilder, tool_executor: ToolExecutor) -> None:
         if not GEMINI_API_KEY:
             raise ValueError("GEMINI_API_KEY environment variable is not set")
-        # Single shared client — thread-safe, reused for all requests
         self._client = genai.Client(api_key=GEMINI_API_KEY)
         self._ctx = context_builder
         self._tools = tool_executor
         self._sessions: dict[str, deque] = {}
+        logger.info("Model chain: %s", " → ".join(MODEL_CHAIN))
 
     def _to_sdk_history(self, messages: list) -> list[gtypes.Content]:
-        """Convert {"role", "content"} dicts to SDK Content objects."""
         history = []
         for m in messages:
             role = "user" if m["role"] == "user" else "model"
@@ -281,6 +333,79 @@ class CCDTCoPilot:
                                    gtypes.Part.from_text(content)])
                 )
         return history
+
+    async def _send_with_fallback(
+        self,
+        history: list[gtypes.Content],
+        first_message: Any,
+        with_tools: bool = True,
+    ) -> tuple[str, list[dict], str]:
+        """
+        Try each model in MODEL_CHAIN. For each model, attempt up to 3 retries
+        on 429. On 404 (model not found), immediately try the next model.
+        Returns (reply_text, tool_calls_list, model_used).
+        """
+        last_exc: Exception = RuntimeError("No models available")
+
+        for model in MODEL_CHAIN:
+            all_tool_calls: list[dict] = []
+            reply = ""
+
+            async def _try_model():
+                nonlocal reply, all_tool_calls
+
+                chat_session = self._client.aio.chats.create(
+                    model=model,
+                    config=_make_config(with_tools=with_tools),
+                    history=history,
+                )
+
+                current: Any = first_message
+                for _ in range(6):  # max 6 tool-use rounds
+                    response = await chat_session.send_message(current)
+
+                    fn_calls: list = []
+                    for part in response.candidates[0].content.parts:
+                        if part.function_call:
+                            fn_calls.append(part.function_call)
+                        if part.text:
+                            reply = part.text.strip()
+
+                    if not fn_calls:
+                        break
+
+                    async def _exec(fc) -> gtypes.Part:
+                        tname = fc.name
+                        tinput = dict(fc.args) if fc.args else {}
+                        all_tool_calls.append({"tool": tname, "input": tinput})
+                        res_str = await self._tools.run(tname, tinput)
+                        return gtypes.Part.from_function_response(
+                            name=tname,
+                            response={"result": json.loads(res_str)},
+                        )
+
+                    parts = await asyncio.gather(*[_exec(fc) for fc in fn_calls])
+                    current = list(parts)
+
+            try:
+                await _call_with_retry(_try_model, max_retries=3, base_delay=2.0)
+                logger.info("Model used: %s", model)
+                return reply, all_tool_calls, model
+
+            except Exception as exc:
+                last_exc = exc
+                if _is_not_found(exc):
+                    logger.warning(
+                        "Model %s not found — trying next in chain", model)
+                    continue
+                elif _is_retryable(exc):
+                    logger.warning(
+                        "Model %s exhausted after retries — trying next in chain", model)
+                    continue
+                else:
+                    raise  # unexpected error — don't swallow it
+
+        raise last_exc  # all models failed
 
     async def chat(self, session_id: str, user_message: str) -> dict:
         t0 = time.perf_counter()
@@ -293,7 +418,6 @@ class CCDTCoPilot:
         messages = self._get_messages(session_id)
         history = self._to_sdk_history(messages)
 
-        # Inject live context only on the first turn of a session
         first_text = (
             f"LIVE CLUSTER CONTEXT:\n{ctx_text}\n\n"
             f"USER QUESTION: {user_message}\n\n"
@@ -301,52 +425,15 @@ class CCDTCoPilot:
             f"Be concise. Use the tools if you need more detail."
         ) if not history else user_message
 
-        all_tool_calls: list[dict] = []
-        reply = ""
-
         try:
-            chat_session = self._client.aio.chats.create(
-                model=GEMINI_MODEL,
-                config=_make_config(with_tools=True),
-                history=history,
+            reply, all_tool_calls, model_used = await self._send_with_fallback(
+                history, first_text, with_tools=True
             )
-
-            current_content: Any = first_text
-
-            for _ in range(6):  # max 6 tool-use rounds
-                response = await chat_session.send_message(current_content)
-
-                fn_calls: list = []
-                for part in response.candidates[0].content.parts:
-                    if part.function_call:
-                        fn_calls.append(part.function_call)
-                    if part.text:
-                        reply = part.text.strip()
-
-                if not fn_calls:
-                    break  # final answer is ready
-
-                # Run all tool calls concurrently
-                async def _exec(fc) -> gtypes.Part:
-                    tool_name = fc.name
-                    tool_input = dict(fc.args) if fc.args else {}
-                    all_tool_calls.append(
-                        {"tool": tool_name, "input": tool_input})
-                    result_str = await self._tools.run(tool_name, tool_input)
-                    return gtypes.Part.from_function_response(
-                        name=tool_name,
-                        response={"result": json.loads(result_str)},
-                    )
-
-                tool_parts = await asyncio.gather(*[_exec(fc) for fc in fn_calls])
-                current_content = list(tool_parts)
-
         except Exception as exc:
             CHAT_ERR.labels(code="500").inc()
-            logger.error("Gemini chat error: %s", exc, exc_info=True)
+            logger.error("All models failed: %s", exc, exc_info=True)
             raise
 
-        # Fallback when model only called tools with no final text
         if not reply:
             reply = (
                 "I retrieved live cluster data via my tools. "
@@ -365,6 +452,7 @@ class CCDTCoPilot:
             "reply":      reply,
             "session_id": session_id,
             "tool_calls": all_tool_calls,
+            "model_used": model_used,
             "usage":      {"input_tokens": 0, "output_tokens": 0},
             "latency_ms": round(elapsed * 1000, 1),
         }
@@ -390,6 +478,28 @@ class CCDTCoPilot:
             CHAT_ERR.labels(code="500").inc()
             yield f'data: {json.dumps({"type": "error", "message": str(exc)})}\n\n'
 
+    async def _generate_simple(self, prompt: str) -> str:
+        """Single-shot generation with model fallback and retry (no tools, no history)."""
+        last_exc: Exception = RuntimeError("No models available")
+        for model in MODEL_CHAIN:
+            async def _try():
+                resp = await self._client.aio.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=_make_config(with_tools=False),
+                )
+                return resp.text
+            try:
+                return await _call_with_retry(_try, max_retries=3, base_delay=2.0)
+            except Exception as exc:
+                last_exc = exc
+                if _is_not_found(exc) or _is_retryable(exc):
+                    logger.warning(
+                        "Model %s unavailable for simple generate — trying next", model)
+                    continue
+                raise
+        raise last_exc
+
     async def generate_incident_report(self, incident_data: dict) -> str:
         raw_ctx = await self._ctx.build_context(include_topology=True, include_guardian=True)
         ctx_text = raw_ctx.get("context_text") or json.dumps(
@@ -402,12 +512,7 @@ class CCDTCoPilot:
             f"## eBPF Evidence, ## Impact Assessment, ## Remediation Actions Taken, "
             f"## Lessons Learned, ## Prevention Plan"
         )
-        response = await self._client.aio.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=_make_config(with_tools=False),
-        )
-        return response.text
+        return await self._generate_simple(prompt)
 
     async def quick_summary(self, gnn_result: dict) -> str:
         inc_type = gnn_result.get("incidentType", "healthy")
@@ -424,12 +529,7 @@ class CCDTCoPilot:
             f"Type: {inc_type} | Root: {root} ({conf:.0%}) | Blast: {blast} | Chain: {chain_str}\n"
             f"Be specific. Numbers only. Plain prose."
         )
-        response = await self._client.aio.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=_make_config(with_tools=False),
-        )
-        return response.text
+        return await self._generate_simple(prompt)
 
     def list_sessions(self) -> list[dict]:
         return [{"session_id": sid, "turns": len(q)} for sid, q in self._sessions.items()]
@@ -459,46 +559,78 @@ class CCDTCoPilot:
             q.append(m)
 
 
-# ─── Kafka consumer ───────────────────────────────────────────────────────────────
+# ─── Kafka consumer — with backoff so it doesn't spam logs ───────────────────
 async def _kafka_inference_consumer(copilot: CCDTCoPilot) -> None:
-    try:
-        from aiokafka import AIOKafkaConsumer
-        consumer = AIOKafkaConsumer(
-            KAFKA_TOPIC_INFER,
-            bootstrap_servers=KAFKA_BOOTSTRAP,
-            group_id="ccdt-copilot-auto-summary",
-            auto_offset_reset="latest",
-            value_deserializer=lambda m: json.loads(m.decode()),
-        )
-        await consumer.start()
-        async for msg in consumer:
-            evt = msg.value
-            if not isinstance(evt, dict):
-                continue
-            if (
-                evt.get("incidentType", "healthy") != "healthy"
-                and evt.get("rootCauseConfidence", 0) >= AUTO_REPORT_THRESH
-            ):
+    """
+    Consume GNN inference results and generate auto-summaries for high-confidence
+    non-healthy incidents. Backs off exponentially if the topic doesn't exist yet,
+    so the log isn't flooded while Kafka is initialising.
+    """
+    backoff = 5.0          # seconds between reconnect attempts
+    max_backoff = 120.0    # cap at 2 minutes
+
+    while True:
+        try:
+            from aiokafka import AIOKafkaConsumer
+            consumer = AIOKafkaConsumer(
+                KAFKA_TOPIC_INFER,
+                bootstrap_servers=KAFKA_BOOTSTRAP,
+                group_id="ccdt-copilot-auto-summary",
+                auto_offset_reset="latest",
+                value_deserializer=lambda m: json.loads(m.decode()),
+                # Silence per-poll metadata errors — we handle reconnect ourselves
+                metadata_max_age_ms=30_000,
+            )
+            await consumer.start()
+            logger.info("Kafka consumer connected — topic: %s",
+                        KAFKA_TOPIC_INFER)
+            backoff = 5.0  # reset on successful connect
+
+            try:
+                async for msg in consumer:
+                    evt = msg.value
+                    if not isinstance(evt, dict):
+                        continue
+                    if (
+                        evt.get("incidentType", "healthy") != "healthy"
+                        and evt.get("rootCauseConfidence", 0) >= AUTO_REPORT_THRESH
+                    ):
+                        try:
+                            summary = await copilot.quick_summary(evt)
+                            logger.info("AUTO-SUMMARY: %s", summary[:120])
+                        except Exception as exc:
+                            logger.warning("Auto-summary failed: %s", exc)
+            finally:
                 try:
-                    summary = await copilot.quick_summary(evt)
-                    logger.info("AUTO-SUMMARY: %s", summary[:120])
-                except Exception as exc:
-                    logger.warning("Auto-summary failed: %s", exc)
-    except Exception as exc:
-        logger.warning("Kafka consumer failed (non-critical): %s", exc)
+                    await consumer.stop()
+                except Exception:
+                    pass
+
+        except asyncio.CancelledError:
+            logger.info("Kafka consumer cancelled — shutting down")
+            return
+
+        except Exception as exc:
+            logger.warning(
+                "Kafka consumer disconnected (%s) — reconnecting in %.0fs",
+                exc, backoff,
+            )
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)
 
 
 # ─── Lifespan ─────────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    logger.info("CCDT Co-Pilot starting (model=%s)…", GEMINI_MODEL)
+    logger.info("CCDT Co-Pilot starting — model chain: %s",
+                " → ".join(MODEL_CHAIN))
     ctx_builder = ClusterContextBuilder()
     tool_executor = ToolExecutor()
     copilot = CCDTCoPilot(ctx_builder, tool_executor)
     app.state.copilot = copilot
     task = asyncio.create_task(_kafka_inference_consumer(copilot))
     app.state.kafka_task = task
-    logger.info("CCDT Co-Pilot ready (google.genai / %s)", GEMINI_MODEL)
+    logger.info("CCDT Co-Pilot ready")
     yield
     task.cancel()
     try:
@@ -512,7 +644,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     title="CCDT Co-Pilot",
     description="Layer-4 Gemini AI Operator — natural language cluster intelligence",
-    version="3.0.0",
+    version="4.0.0",
     lifespan=lifespan,
 )
 
@@ -520,9 +652,7 @@ app = FastAPI(
 class ChatRequest(BaseModel):
     message:    str = Field(..., min_length=1, max_length=8000)
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    # accepted but managed internally
     history:    list = Field(default_factory=list)
-    # accepted but managed internally
     context:    dict = Field(default_factory=dict)
 
 
@@ -534,11 +664,11 @@ class ReportRequest(BaseModel):
 @app.get("/health")
 async def health() -> JSONResponse:
     return JSONResponse(content={
-        "status":    "ok",
-        "service":   "layer4-copilot",
-        "sdk":       "google.genai",
-        "model":     GEMINI_MODEL,
-        "timestamp": int(time.time()),
+        "status":      "ok",
+        "service":     "layer4-copilot",
+        "sdk":         "google.genai",
+        "model_chain": MODEL_CHAIN,
+        "timestamp":   int(time.time()),
     })
 
 

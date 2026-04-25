@@ -379,7 +379,7 @@ services:
     environment:
       <<: *kafka-env
       GEMINI_API_KEY:          ${GEMINI_API_KEY:?Set GEMINI_API_KEY in .env}
-      GEMINI_MODEL:            gemini-1.5-flash
+      GEMINI_MODEL:            gemini-2.5-flash
       MAX_TOKENS:              "2048"
       MAX_HISTORY_TURNS:       "20"
       GNN_SERVICE_URL:         http://layer2-cognitive:8001
