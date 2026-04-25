@@ -1,0 +1,378 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// CCDT — copilot.proto  v1.0
+// Protocol Buffer definitions for Layer-4 Co-Pilot (Claude AI) interface.
+//
+// Flow:  Operator ──► API Gateway ──► Layer-4 Co-Pilot ──► Claude API
+//                                   ◄── SSE stream ─────────────────
+//
+// Code generation:
+//   protoc --python_out=generated --pyi_out=generated \
+//          --grpc_python_out=generated \
+//          --proto_path=. copilot.proto
+// ═══════════════════════════════════════════════════════════════════════════════
+syntax = "proto3";
+
+package ccdt.copilot;
+
+option go_package   = "github.com/your-org/ccdt/shared/proto/copilot;copilotpb";
+option java_package = "io.ccdt.copilot";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "graph.proto";
+import "actions.proto";
+
+// ── Enumerations ──────────────────────────────────────────────────────────────
+
+// Role of a message in the conversation
+enum MessageRole {
+  ROLE_UNKNOWN   = 0;
+  ROLE_USER      = 1;   // human operator message
+  ROLE_ASSISTANT = 2;   // Claude AI response
+  ROLE_SYSTEM    = 3;   // system prompt / context injection
+  ROLE_TOOL      = 4;   // tool use result returned to Claude
+}
+
+// Type of Co-Pilot message content
+enum MessageType {
+  MSG_UNKNOWN         = 0;
+  MSG_TEXT            = 1;   // plain text (most common)
+  MSG_INCIDENT_REPORT = 2;   // auto-generated incident summary
+  MSG_ACTION_PROPOSAL = 3;   // Guardian proposes action, operator confirms
+  MSG_ACTION_RESULT   = 4;   // execution result notification
+  MSG_TOPOLOGY_EMBED  = 5;   // topology graph embedded in conversation
+  MSG_TOOL_CALL       = 6;   // Claude requested a tool call
+  MSG_TOOL_RESULT     = 7;   // result returned from a tool call
+  MSG_ERROR           = 8;   // error notification
+}
+
+// Session state
+enum SessionState {
+  SESSION_UNKNOWN  = 0;
+  SESSION_ACTIVE   = 1;
+  SESSION_IDLE     = 2;   // no messages for > 5 min
+  SESSION_CLOSED   = 3;
+  SESSION_ERROR    = 4;
+}
+
+// Stream event type (for SSE streaming)
+enum StreamEventType {
+  STREAM_UNKNOWN       = 0;
+  STREAM_TOKEN         = 1;   // partial response token
+  STREAM_TOOL_USE      = 2;   // Claude is calling a tool
+  STREAM_TOOL_RESULT   = 3;   // tool result being fed back
+  STREAM_COMPLETE      = 4;   // full message complete
+  STREAM_ERROR         = 5;
+  STREAM_INCIDENT      = 6;   // auto-injected incident context
+  STREAM_THINKING      = 7;   // Claude extended thinking in progress
+}
+
+// Tool names available to Claude
+enum ToolName {
+  TOOL_UNKNOWN              = 0;
+  TOOL_GET_TOPOLOGY         = 1;   // fetch live topology graph
+  TOOL_GET_EBPF_EVENTS      = 2;   // fetch recent eBPF events for a node
+  TOOL_RUN_GHOST_PREVIEW    = 3;   // simulate an action via Guardian
+  TOOL_PROPOSE_ACTION       = 4;   // propose a Guardian remediation action
+  TOOL_GET_LOGS             = 5;   // fetch pod logs
+  TOOL_GET_METRICS          = 6;   // fetch Prometheus metrics for a node
+  TOOL_GET_INCIDENT_HISTORY = 7;   // fetch past incidents
+  TOOL_SEARCH_RUNBOOKS      = 8;   // search internal runbook KB
+}
+
+// ── Tool call / result ────────────────────────────────────────────────────────
+
+message ToolCallParameters {
+  // For TOOL_GET_TOPOLOGY
+  string              target_namespace   = 1;
+
+  // For TOOL_GET_EBPF_EVENTS
+  string              node_name          = 2;
+  string              event_type_filter  = 3;
+  uint32              limit              = 4;
+  google.protobuf.Duration time_range    = 5;
+
+  // For TOOL_RUN_GHOST_PREVIEW / TOOL_PROPOSE_ACTION
+  string              action_name        = 6;
+  string              target_node        = 7;
+  string              target_resource    = 8;
+  map<string, string> action_params      = 9;
+
+  // For TOOL_GET_LOGS
+  string              pod_name           = 10;
+  string              container_name     = 11;
+  uint32              tail_lines         = 12;
+
+  // For TOOL_GET_METRICS
+  string              promql_expr        = 13;
+  uint32              lookback_minutes   = 14;
+
+  // For TOOL_SEARCH_RUNBOOKS
+  string              search_query       = 15;
+}
+
+message ToolCall {
+  // Tool call ID as assigned by Claude API
+  string              tool_call_id  = 1;
+  ToolName            tool_name     = 2;
+  // Raw JSON parameters from Claude (preserved for API round-trip)
+  string              params_json   = 3;
+  // Parsed parameters
+  ToolCallParameters  params        = 4;
+  google.protobuf.Timestamp called_at = 5;
+}
+
+message ToolResult {
+  string              tool_call_id  = 1;
+  ToolName            tool_name     = 2;
+  bool                success       = 3;
+  // Result payload — JSON-encoded (sent back to Claude)
+  string              result_json   = 4;
+  // Error message on failure
+  string              error         = 5;
+  // Human-readable summary of the result
+  string              summary       = 6;
+  float               duration_ms   = 7;
+  google.protobuf.Timestamp returned_at = 8;
+}
+
+// ── Token usage ───────────────────────────────────────────────────────────────
+
+message TokenUsage {
+  uint32  input_tokens         = 1;
+  uint32  output_tokens        = 2;
+  uint32  cache_read_tokens    = 3;
+  uint32  cache_write_tokens   = 4;
+  // Approximate cost in USD (based on published Claude pricing)
+  float   estimated_cost_usd   = 5;
+}
+
+// ── Message content ───────────────────────────────────────────────────────────
+
+message ChatMessage {
+  string                    message_id    = 1;
+  string                    session_id    = 2;
+  MessageRole               role          = 3;
+  MessageType               message_type  = 4;
+
+  // Text content
+  string                    content       = 5;
+
+  // Tool call (from assistant)
+  ToolCall                  tool_call     = 6;
+  // Tool result (from tool → back to assistant)
+  ToolResult                tool_result   = 7;
+
+  // Embedded structured data
+  ccdt.graph.GnnInferenceResult  inference_context = 8;
+  ccdt.actions.ActionRequest     action_proposal   = 9;
+  ccdt.actions.ActionResult      action_result     = 10;
+
+  // Claude API metadata
+  string                    model            = 11;
+  string                    stop_reason      = 12;
+  TokenUsage                token_usage      = 13;
+
+  google.protobuf.Timestamp created_at       = 14;
+  // Message index within session (0-based)
+  uint32                    turn_index       = 15;
+
+  // Whether this message was auto-injected (incident alert, not user-typed)
+  bool                      auto_injected    = 16;
+  // Latency for this Claude API call
+  float                     api_latency_ms   = 17;
+}
+
+// ── Session context ───────────────────────────────────────────────────────────
+// A session is a rolling 20-turn conversation window between one operator
+// and the Co-Pilot.
+
+message SessionContext {
+  string                    session_id       = 1;
+  // Operator identity
+  string                    operator_id      = 2;
+  string                    operator_name    = 3;
+
+  // Conversation history (rolling window, max 20 turns)
+  repeated ChatMessage      history          = 4;
+
+  // Active incident being discussed
+  string                    active_incident_id = 5;
+  ccdt.graph.GnnInferenceResult latest_inference = 6;
+
+  // Session lifecycle
+  SessionState              state            = 7;
+  google.protobuf.Timestamp created_at       = 8;
+  google.protobuf.Timestamp last_activity_at = 9;
+  uint32                    turn_count       = 10;
+
+  // Accumulated token usage for this session
+  TokenUsage                total_token_usage = 11;
+
+  // System prompt hash (to detect prompt injection attempts)
+  string                    system_prompt_hash = 12;
+}
+
+// ── Chat request ──────────────────────────────────────────────────────────────
+
+message ChatRequest {
+  // Empty session_id = create new session
+  string                    session_id    = 1;
+  string                    operator_id   = 2;
+  // The user's message text
+  string                    message       = 3;
+  // Optional: inject live inference context with this message
+  bool                      include_context = 4;
+  // Optional: force a specific tool call
+  string                    force_tool    = 5;
+  google.protobuf.Timestamp sent_at       = 6;
+}
+
+// ── Chat response ─────────────────────────────────────────────────────────────
+
+message ChatResponse {
+  string                    session_id    = 1;
+  string                    message_id    = 2;
+  // Full assistant response text
+  string                    content       = 3;
+  // All tool calls made during this response (may be multiple)
+  repeated ToolCall         tool_calls    = 4;
+  // All tool results (parallel to tool_calls)
+  repeated ToolResult       tool_results  = 5;
+  // Token usage for this response
+  TokenUsage                token_usage   = 6;
+  string                    stop_reason   = 7;
+  string                    model         = 8;
+  float                     latency_ms    = 9;
+  uint32                    tool_rounds   = 10;  // number of tool-use iterations
+  google.protobuf.Timestamp responded_at  = 11;
+}
+
+// ── Stream event ──────────────────────────────────────────────────────────────
+// Sent over SSE as the Claude API streams its response token-by-token.
+
+message StreamEvent {
+  string          session_id    = 1;
+  string          message_id    = 2;
+  StreamEventType event_type    = 3;
+
+  // For STREAM_TOKEN: partial text fragment
+  string          delta_text    = 4;
+  // For STREAM_TOOL_USE: the tool being called
+  ToolCall        tool_call     = 5;
+  // For STREAM_TOOL_RESULT: the result being returned
+  ToolResult      tool_result   = 6;
+  // For STREAM_COMPLETE: final token usage
+  TokenUsage      final_usage   = 7;
+  // For STREAM_INCIDENT: auto-injected incident summary
+  string          incident_summary = 8;
+  // For STREAM_ERROR: error detail
+  string          error         = 9;
+  // For STREAM_THINKING: extended thinking status
+  string          thinking_delta = 10;
+
+  google.protobuf.Timestamp event_ts = 11;
+  // Sequence number for client-side ordering
+  uint32          seq_num       = 12;
+}
+
+// ── Incident report ───────────────────────────────────────────────────────────
+// Auto-generated when GNN confidence ≥ 0.85. Injected into Co-Pilot session
+// as a ROLE_SYSTEM message with type MSG_INCIDENT_REPORT.
+
+message IncidentReport {
+  string                    report_id         = 1;
+  google.protobuf.Timestamp detected_at       = 2;
+
+  // From GNN inference
+  string                    inference_id      = 3;
+  ccdt.graph.IncidentType   incident_type     = 4;
+  float                     graph_confidence  = 5;
+
+  // Root cause
+  string                    root_cause_service   = 6;
+  string                    root_cause_namespace = 7;
+  ccdt.graph.NodeClass      root_cause_class     = 8;
+
+  // Impact
+  uint32                    affected_services    = 9;
+  repeated string           affected_namespaces  = 10;
+
+  // Top causal features for human explanation
+  repeated ccdt.graph.TopFeature top_features    = 11;
+
+  // Proposed Guardian action (from RL policy)
+  ccdt.actions.ActionRequest proposed_action      = 12;
+  ccdt.actions.GhostSimulationResult ghost_result = 13;
+
+  // Natural-language summary (1-2 sentences, generated by Co-Pilot)
+  string                    nl_summary           = 14;
+
+  // Severity
+  string                    severity             = 15;  // "critical" | "high" | "medium"
+  // Incident ID for cross-service correlation
+  string                    incident_id          = 16;
+  string                    schema_ver           = 17;
+}
+
+// ── Fine-tuning dataset entry ─────────────────────────────────────────────────
+// Used by dataset_builder.py to create SFT/RLHF training data.
+
+message FinetuningExample {
+  string                    example_id       = 1;
+  // Full conversation context
+  repeated ChatMessage      messages         = 2;
+  // Whether this was a human-approved example (for RLHF reward)
+  bool                      human_approved   = 3;
+  // Operator's rating (1-5) if provided
+  uint32                    operator_rating  = 4;
+  string                    operator_comment = 5;
+  // Incident outcome (did the proposed action resolve the issue?)
+  bool                      action_resolved_incident = 6;
+  google.protobuf.Timestamp created_at       = 7;
+}
+
+// ── gRPC service definition ───────────────────────────────────────────────────
+
+service CopilotService {
+  // Send a chat message, receive a full response (non-streaming)
+  rpc Chat(ChatRequest) returns (ChatResponse);
+
+  // Send a chat message, receive streaming response
+  rpc ChatStream(ChatRequest) returns (stream StreamEvent);
+
+  // Get or create a session
+  rpc GetSession(GetSessionRequest) returns (SessionContext);
+
+  // List all active sessions
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+
+  // Close a session
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+
+  // Inject incident report into an active session
+  rpc InjectIncidentReport(IncidentReport) returns (InjectResponse);
+
+  // Export session as fine-tuning example
+  rpc ExportFinetuningExample(ExportRequest) returns (FinetuningExample);
+
+  // Health check
+  rpc HealthCheck(CopilotHealthRequest) returns (CopilotHealthResponse);
+}
+
+message GetSessionRequest    { string session_id = 1; string operator_id = 2; }
+message ListSessionsRequest  { string operator_id = 1; SessionState state = 2; }
+message ListSessionsResponse { repeated SessionContext sessions = 1; }
+message CloseSessionRequest  { string session_id = 1; string reason = 2; }
+message CloseSessionResponse { bool success = 1; string session_id = 2; }
+message InjectResponse       { bool success = 1; string message_id = 2; }
+message ExportRequest        { string session_id = 1; bool include_all_turns = 2; }
+message CopilotHealthRequest {}
+message CopilotHealthResponse {
+  bool   healthy              = 1;
+  string status               = 2;
+  string claude_model         = 3;
+  uint32 active_sessions      = 4;
+  float  avg_response_ms      = 5;
+  uint32 total_tokens_today   = 6;
+}

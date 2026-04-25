@@ -1,0 +1,251 @@
+{{/*
+CCDT — NetworkPolicies (zero-trust inter-service mesh)
+Each policy explicitly allows only the required traffic paths.
+*/}}
+{{- if .Values.networkPolicy.enabled }}
+---
+# Default deny ALL ingress for the entire namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# Layer-1 → Kafka (port 9092) — eBPF events
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-layer1-to-kafka
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: layer1-nervous
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kafka
+      ports:
+        - port: 9092
+          protocol: TCP
+        - port: 9093
+          protocol: TCP
+---
+# Layer-2 ← Kafka (consume eBPF events)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-layer2-from-kafka
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: layer2-cognitive
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kafka
+      ports:
+        - port: 8001
+          protocol: TCP
+---
+# Layer-2 → API Gateway + Layer-3 (inference push)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-layer2-egress
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: layer2-cognitive
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: layer3-guardian
+      ports:
+        - port: 8002
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kafka
+      ports:
+        - port: 9092
+          protocol: TCP
+    # Kubernetes DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+---
+# Layer-3 ← Layer-2 (receive inference)
+# Layer-3 ← Layer-4 (ghost preview + action proposal)
+# Layer-3 ← API Gateway (action trigger)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-layer3-ingress
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: layer3-guardian
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: layer2-cognitive
+        - podSelector:
+            matchLabels:
+              app: layer4-copilot
+        - podSelector:
+            matchLabels:
+              app: api-gateway
+      ports:
+        - port: 8002
+          protocol: TCP
+---
+# Layer-4 ← API Gateway (chat requests)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-layer4-ingress
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: layer4-copilot
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api-gateway
+      ports:
+        - port: 8003
+          protocol: TCP
+---
+# Layer-4 egress: Anthropic API + GNN + Guardian + eBPF
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-layer4-egress
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: layer4-copilot
+  policyTypes: [Egress]
+  egress:
+    # Internal services
+    - to:
+        - podSelector:
+            matchLabels:
+              app: layer2-cognitive
+      ports:
+        - port: 8001
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: layer3-guardian
+      ports:
+        - port: 8002
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app: layer1-nervous
+      ports:
+        - port: 9100
+          protocol: TCP
+    # External: Anthropic API (HTTPS 443) — requires internet egress
+    - ports:
+        - port: 443
+          protocol: TCP
+    # Kubernetes DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+---
+# API Gateway: allow ingress from anywhere (public endpoint)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-gateway-ingress
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: api-gateway
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 8000
+          protocol: TCP
+---
+# Prometheus scraping: allow from monitoring namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.serviceMonitor.namespace }}
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - port: 9090
+          protocol: TCP
+        - port: 9100
+          protocol: TCP
+        - port: 8181
+          protocol: TCP
+{{- end }}

@@ -1,0 +1,210 @@
+{{- if .Values.layer2.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: layer2-cognitive
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer2-cognitive" .) | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-layer2-cognitive
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer2-cognitive" .) | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods, nodes, services, endpoints, namespaces]
+    verbs:     [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets, daemonsets]
+    verbs:     [get, list, watch]
+  - apiGroups: [metrics.k8s.io]
+    resources: [pods, nodes]
+    verbs:     [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-layer2-cognitive
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer2-cognitive" .) | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind:     ClusterRole
+  name:     {{ .Release.Name }}-layer2-cognitive
+subjects:
+  - kind:      ServiceAccount
+    name:      layer2-cognitive
+    namespace: {{ include "ccdt.namespace" . }}
+---
+{{- if .Values.layer2.modelPvc.enabled }}
+{{- if not .Values.layer2.modelPvc.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: layer2-cognitive-model-pvc
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer2-cognitive" .) | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [{{ .Values.layer2.modelPvc.accessMode }}]
+  storageClassName: {{ .Values.layer2.modelPvc.storageClass | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.layer2.modelPvc.size }}
+{{- end }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: layer2-cognitive
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer2-cognitive" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.layer2.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ccdt.componentSelectorLabels" (list "layer2-cognitive" .) | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        {{- include "ccdt.componentLabels" (list "layer2-cognitive" .) | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "9090"
+        prometheus.io/path:   "/metrics"
+        checksum/config: {{ include (print $.Template.BasePath "/layer2-cognitive/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: layer2-cognitive
+      securityContext:
+        {{- include "ccdt.podSecurityContext" . | nindent 8 }}
+      {{- if .Values.layer2.affinity.podAntiAffinity }}
+      {{- include "ccdt.podAntiAffinity" "layer2-cognitive" | nindent 6 }}
+      {{- end }}
+      {{- include "ccdt.computeTolerations" . | nindent 6 }}
+      initContainers:
+        - name: wait-for-kafka
+          image: busybox:1.36
+          command: ["/bin/sh", "-c", "until nc -z {{ include "ccdt.kafkaBootstrap" . | replace ":9092" "" }} 9092; do echo 'Waiting for Kafka...'; sleep 5; done"]
+      containers:
+        - name: gnn-server
+          image: {{ include "ccdt.image" (dict "ctx" . "repo" .Values.layer2.image "global" .Values.global) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - python
+            - -m
+            - uvicorn
+            - inference.server:app
+            - --host=0.0.0.0
+            - --port=8001
+            - --workers=1
+          env:
+            {{- include "ccdt.commonEnv" . | nindent 12 }}
+            - name:  MODEL_PATH
+              value: /app/checkpoints/causal_gnn_best.pt
+            - name:  INFERENCE_DEVICE
+              value: cpu
+            - name:  INFER_INTERVAL_S
+              value: {{ .Values.layer2.env.inferIntervalS | quote }}
+            - name:  INFERENCE_CACHE_TTL_S
+              value: {{ .Values.layer2.env.inferenceCacheTtlS | quote }}
+            - name:  OMP_NUM_THREADS
+              value: {{ .Values.layer2.env.ompNumThreads | quote }}
+            - name:  PORT
+              value: "8001"
+          ports:
+            - { name: http,    containerPort: 8001, protocol: TCP }
+            - { name: metrics, containerPort: 9090, protocol: TCP }
+          volumeMounts:
+            - { name: model-storage, mountPath: /app/checkpoints, readOnly: true }
+          livenessProbe:
+            httpGet: { path: /health, port: 8001 }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            failureThreshold: 3
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet: { path: /ready, port: 8001 }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          startupProbe:
+            httpGet: { path: /health, port: 8001 }
+            failureThreshold: 30
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.layer2.resources | nindent 12 }}
+          securityContext:
+            {{- include "ccdt.containerSecurityContext" . | nindent 12 }}
+      terminationGracePeriodSeconds: 60
+      volumes:
+        {{- include "ccdt.modelVolume" (list "layer2-cognitive" .Values.layer2.modelPvc) | nindent 8 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: layer2-cognitive
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer2-cognitive" .) | nindent 4 }}
+spec:
+  selector:
+    {{- include "ccdt.componentSelectorLabels" (list "layer2-cognitive" .) | nindent 4 }}
+  ports:
+    - { name: http,    port: 8001, targetPort: http,    protocol: TCP }
+    - { name: metrics, port: 9090, targetPort: metrics, protocol: TCP }
+  type: ClusterIP
+{{- if .Values.layer2.hpa.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: layer2-cognitive
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer2-cognitive" .) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind:       Deployment
+    name:       layer2-cognitive
+  minReplicas: {{ .Values.layer2.hpa.minReplicas }}
+  maxReplicas: {{ .Values.layer2.hpa.maxReplicas }}
+  {{- include "ccdt.hpaMetrics" .Values.layer2.hpa | nindent 2 }}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - { type: Pods, value: 2, periodSeconds: 30 }
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - { type: Pods, value: 1, periodSeconds: 120 }
+{{- end }}
+{{- if .Values.layer2.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: layer2-cognitive
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer2-cognitive" .) | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.layer2.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "ccdt.componentSelectorLabels" (list "layer2-cognitive" .) | nindent 6 }}
+{{- end }}
+{{- end }}

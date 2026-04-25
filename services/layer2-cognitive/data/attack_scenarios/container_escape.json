@@ -1,0 +1,21 @@
+{
+  "scenario_id": "attack_006",
+  "description": "Container escape via CAP_SYS_ADMIN + pivot_root — attacker pivots from order-svc to host",
+  "graph_label": 2,
+  "nodes": [
+    {"id": "api-gw",      "label": "API Gateway",    "layer": "network", "cpu": 48, "mem": 55, "restarts": 0, "oom_kills": 0, "tcp_retransmit_rate": 6,   "sched_latency_p99_ms": 4,  "cap_event": 0, "file_event": 0, "error_rate": 0.001, "request_rate": 310, "node_label": 0},
+    {"id": "order-svc",   "label": "Order Service",  "layer": "service", "cpu": 62, "mem": 58, "restarts": 0, "oom_kills": 0, "tcp_retransmit_rate": 0,   "sched_latency_p99_ms": 8,  "cap_event": 4, "file_event": 6, "error_rate": 0.002, "request_rate": 290, "node_label": 2},
+    {"id": "postgres",    "label": "PostgreSQL",     "layer": "data",    "cpu": 31, "mem": 44, "restarts": 0, "oom_kills": 0, "tcp_retransmit_rate": 0,   "sched_latency_p99_ms": 4,  "cap_event": 0, "file_event": 0, "error_rate": 0.0,   "request_rate": 420, "node_label": 0},
+    {"id": "redis",       "label": "Redis Cache",    "layer": "data",    "cpu": 18, "mem": 42, "restarts": 0, "oom_kills": 0, "tcp_retransmit_rate": 0,   "sched_latency_p99_ms": 1,  "cap_event": 0, "file_event": 0, "error_rate": 0.0,   "request_rate": 780, "node_label": 0},
+    {"id": "payment-svc", "label": "Payment Service","layer": "service", "cpu": 34, "mem": 46, "restarts": 0, "oom_kills": 0, "tcp_retransmit_rate": 0,   "sched_latency_p99_ms": 5,  "cap_event": 0, "file_event": 0, "error_rate": 0.001, "request_rate": 82,  "node_label": 0},
+    {"id": "notify-svc",  "label": "Notify Service", "layer": "service", "cpu": 29, "mem": 38, "restarts": 0, "oom_kills": 0, "tcp_retransmit_rate": 0,   "sched_latency_p99_ms": 6,  "cap_event": 0, "file_event": 0, "error_rate": 0.001, "request_rate": 110, "node_label": 0}
+  ],
+  "edges": [
+    {"from": "api-gw",      "to": "order-svc",   "latency_ms": 8,   "error_rate": 0.002, "request_rate": 290, "causal": true},
+    {"from": "api-gw",      "to": "payment-svc", "latency_ms": 5,   "error_rate": 0.001, "request_rate": 82,  "causal": false},
+    {"from": "order-svc",   "to": "postgres",    "latency_ms": 4,   "error_rate": 0.0,   "request_rate": 420, "causal": false},
+    {"from": "order-svc",   "to": "redis",       "latency_ms": 0.9, "error_rate": 0.0,   "request_rate": 780, "causal": false},
+    {"from": "order-svc",   "to": "notify-svc",  "latency_ms": 3.8, "error_rate": 0.001, "request_rate": 110, "causal": false},
+    {"from": "payment-svc", "to": "postgres",    "latency_ms": 6,   "error_rate": 0.0,   "request_rate": 88,  "causal": false}
+  ]
+}

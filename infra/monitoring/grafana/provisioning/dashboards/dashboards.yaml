@@ -1,0 +1,12 @@
+# Grafana — Auto-provision dashboard files from /var/lib/grafana/dashboards
+apiVersion: 1
+providers:
+  - name: CCDT Dashboards
+    orgId: 1
+    folder: CCDT
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

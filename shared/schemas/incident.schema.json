@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ccdt.io/schemas/incident.schema.json",
+  "title": "CCDTIncident",
+  "description": "CCDT unified incident record — published to Kafka ccdt.incidents and persisted to RDS Aurora PostgreSQL. Aggregates GNN detection, Guardian actions, and Co-Pilot session for the complete incident lifecycle.",
+  "type": "object",
+
+  "required": ["incident_id", "detected_at", "state", "severity", "incident_type", "schema_ver"],
+
+  "properties": {
+    "incident_id": { "type": "string", "format": "uuid" },
+    "detected_at": { "type": "string", "format": "date-time" },
+    "resolved_at": { "type": "string", "format": "date-time" },
+
+    "state": {
+      "type": "string",
+      "enum": ["DETECTING", "ACTIVE", "REMEDIATING", "RESOLVED", "FALSE_POSITIVE"]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    },
+    "incident_type": {
+      "type": "string",
+      "enum": ["NONE", "FAULT", "ATTACK", "FAULT_ATTACK", "PERFORMANCE", "RESOURCE"]
+    },
+
+    "graph_confidence":       { "type": "number", "minimum": 0, "maximum": 1 },
+    "root_cause_service":     { "type": "string" },
+    "root_cause_namespace":   { "type": "string" },
+    "root_cause_node_class":  { "type": "string", "enum": ["UNKNOWN","HEALTHY","FAULT","ATTACK"] },
+    "blast_radius_count":     { "type": "integer", "minimum": 0 },
+    "affected_namespaces":    { "type": "array", "items": { "type": "string" } },
+
+    "inference_id":   { "type": "string", "format": "uuid" },
+    "session_id":     { "type": "string", "format": "uuid" },
+    "nl_summary":     { "type": "string", "maxLength": 1000 },
+    "operator_notes": { "type": "string" },
+    "schema_ver":     { "type": "string", "const": "1.0" },
+
+    "mttr_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Mean time to resolve in seconds (null if unresolved)"
+    },
+    "false_positive": {
+      "type": "boolean",
+      "description": "Operator marked this incident as a false positive"
+    },
+
+    "timeline": {
+      "type": "array",
+      "description": "Ordered timeline of incident lifecycle events",
+      "items": { "$ref": "#/$defs/TimelineEvent" }
+    },
+    "actions_taken": {
+      "type": "array",
+      "description": "Guardian actions executed during this incident",
+      "items": { "$ref": "#/$defs/ActionSummary" }
+    },
+    "top_features": {
+      "type": "array",
+      "maxItems": 10,
+      "items": { "$ref": "#/$defs/TopFeature" }
+    }
+  },
+
+  "$defs": {
+    "TimelineEvent": {
+      "type": "object",
+      "required": ["ts", "event_type", "description"],
+      "properties": {
+        "ts":           { "type": "string", "format": "date-time" },
+        "event_type": {
+          "type": "string",
+          "enum": [
+            "DETECTED", "GNN_CONFIDENCE_UPDATE", "ACTION_PROPOSED",
+            "ACTION_APPROVED", "ACTION_DENIED", "ACTION_EXECUTED",
+            "ACTION_SUCCEEDED", "ACTION_FAILED", "ACTION_ROLLED_BACK",
+            "COPILOT_NOTIFIED", "OPERATOR_JOINED", "OPERATOR_APPROVED",
+            "INCIDENT_RESOLVED", "MARKED_FALSE_POSITIVE"
+          ]
+        },
+        "description":  { "type": "string" },
+        "actor":        { "type": "string", "description": "Who or what triggered this event" },
+        "confidence":   { "type": "number", "minimum": 0, "maximum": 1 },
+        "detail":       { "type": "object", "additionalProperties": true }
+      }
+    },
+
+    "ActionSummary": {
+      "type": "object",
+      "required": ["audit_id", "action_name", "status"],
+      "properties": {
+        "audit_id":     { "type": "string", "format": "uuid" },
+        "action_name":  { "type": "string" },
+        "target":       { "type": "string" },
+        "status":       { "type": "string" },
+        "executed_at":  { "type": "string", "format": "date-time" },
+        "duration_ms":  { "type": "number", "minimum": 0 },
+        "risk_score":   { "type": "number", "minimum": 0, "maximum": 1 },
+        "opa_approved": { "type": "boolean" }
+      }
+    },
+
+    "TopFeature": {
+      "type": "object",
+      "properties": {
+        "feature_name": { "type": "string" },
+        "node_name":    { "type": "string" },
+        "importance":   { "type": "number", "minimum": 0, "maximum": 1 },
+        "value":        { "type": "number" },
+        "threshold":    { "type": "number" },
+        "explanation":  { "type": "string" }
+      }
+    }
+  }
+}

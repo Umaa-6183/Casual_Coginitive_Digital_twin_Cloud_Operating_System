@@ -1,0 +1,96 @@
+{
+  "scenario_id": "attack_lateral_movement",
+  "description": "Lateral movement via ptrace syscall \u2014 attacker pivots from notify-svc to redis",
+  "nodes": [
+    {
+      "id": "notify-svc",
+      "label": "Notify Service",
+      "status": "critical",
+      "layer": "service",
+      "cpu": 82,
+      "mem": 71,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 6,
+      "sched_latency_p99_ms": 18,
+      "cap_event": 1,
+      "file_event": 1,
+      "degree": 3,
+      "node_label": 2
+    },
+    {
+      "id": "redis",
+      "label": "Redis Cache",
+      "status": "warning",
+      "layer": "data",
+      "cpu": 65,
+      "mem": 72,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 4,
+      "sched_latency_p99_ms": 12,
+      "cap_event": 1,
+      "file_event": 0,
+      "degree": 2,
+      "node_label": 2
+    },
+    {
+      "id": "order-svc",
+      "label": "Order Service",
+      "status": "healthy",
+      "layer": "service",
+      "cpu": 42,
+      "mem": 58,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 0,
+      "sched_latency_p99_ms": 8,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 3,
+      "node_label": 0
+    },
+    {
+      "id": "kafka",
+      "label": "Kafka Broker",
+      "status": "healthy",
+      "layer": "system",
+      "cpu": 35,
+      "mem": 52,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 0,
+      "sched_latency_p99_ms": 2,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 2,
+      "node_label": 0
+    }
+  ],
+  "edges": [
+    {
+      "from": "order-svc",
+      "to": "notify-svc",
+      "latency_ms": 28,
+      "error_rate": 0.02,
+      "request_rate": 120,
+      "causal": true
+    },
+    {
+      "from": "notify-svc",
+      "to": "kafka",
+      "latency_ms": 5,
+      "error_rate": 0.0,
+      "request_rate": 180,
+      "causal": false
+    },
+    {
+      "from": "order-svc",
+      "to": "redis",
+      "latency_ms": 18,
+      "error_rate": 0.01,
+      "request_rate": 820,
+      "causal": true
+    }
+  ]
+}

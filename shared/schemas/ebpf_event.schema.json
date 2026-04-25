@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ccdt.io/schemas/ebpf_event.schema.json",
+  "title": "CCDTEbpfEvent",
+  "description": "CCDT Layer-1 eBPF telemetry event batch produced by the Nervous System collector. Published to Kafka topic ccdt.ebpf.events as a TypedEbpfBatch (max 500 events, 64 KB).",
+  "type": "object",
+
+  "required": ["batch_id", "node_name", "collector_id", "batch_ts", "schema_ver"],
+
+  "properties": {
+    "batch_id":     { "type": "string", "description": "Unique batch ID (UUID)" },
+    "node_name":    { "type": "string", "description": "Kubernetes worker node name" },
+    "collector_id": { "type": "string", "format": "uuid" },
+    "batch_ts":     { "type": "string", "format": "date-time" },
+    "schema_ver":   { "type": "string", "const": "1.0" },
+
+    "type_counts": {
+      "type": "object",
+      "description": "Count of events by type in this batch",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+
+    "capability_events":     { "type": "array", "items": { "$ref": "#/$defs/CapabilityEvent" } },
+    "oom_kill_events":       { "type": "array", "items": { "$ref": "#/$defs/OomKillEvent" } },
+    "tcp_retransmit_events": { "type": "array", "items": { "$ref": "#/$defs/TcpRetransmitEvent" } },
+    "sched_latency_events":  { "type": "array", "items": { "$ref": "#/$defs/SchedLatencyEvent" } },
+    "file_access_events":    { "type": "array", "items": { "$ref": "#/$defs/FileAccessEvent" } },
+    "syscall_events":        { "type": "array", "items": { "$ref": "#/$defs/SyscallEvent" } },
+    "execve_events":         { "type": "array", "items": { "$ref": "#/$defs/ExecveEvent" } },
+    "network_events":        { "type": "array", "items": { "$ref": "#/$defs/NetworkConnectEvent" } }
+  },
+
+  "$defs": {
+    "EventMetadata": {
+      "type": "object",
+      "required": ["kernel_ts_ns", "node_name", "pid", "comm"],
+      "properties": {
+        "kernel_ts_ns":   { "type": "integer", "minimum": 0 },
+        "wall_clock_ts":  { "type": "string", "format": "date-time" },
+        "node_name":      { "type": "string" },
+        "pod_name":       { "type": "string" },
+        "namespace":      { "type": "string" },
+        "container_id":   { "type": "string" },
+        "container_name": { "type": "string" },
+        "pid":            { "type": "integer", "minimum": 0 },
+        "tgid":           { "type": "integer", "minimum": 0 },
+        "uid":            { "type": "integer", "minimum": 0 },
+        "gid":            { "type": "integer", "minimum": 0 },
+        "comm":           { "type": "string", "maxLength": 16 },
+        "ppid":           { "type": "integer", "minimum": 0 },
+        "collector_ver":  { "type": "string" },
+        "severity": {
+          "type": "string",
+          "enum": ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"]
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+
+    "CapabilityEvent": {
+      "type": "object",
+      "required": ["meta", "capability"],
+      "properties": {
+        "meta":         { "$ref": "#/$defs/EventMetadata" },
+        "capability":   { "type": "string" },
+        "syscall_nr":   { "type": "integer" },
+        "allowed":      { "type": "boolean" },
+        "cap_bitmask":  { "type": "string" },
+        "audit_serial": { "type": "integer" }
+      }
+    },
+
+    "OomKillEvent": {
+      "type": "object",
+      "required": ["meta", "victim_pid", "victim_comm"],
+      "properties": {
+        "meta":              { "$ref": "#/$defs/EventMetadata" },
+        "victim_pid":        { "type": "integer", "minimum": 0 },
+        "victim_comm":       { "type": "string" },
+        "oom_score":         { "type": "integer" },
+        "victim_rss_bytes":  { "type": "integer", "minimum": 0 },
+        "total_vm_bytes":    { "type": "integer", "minimum": 0 },
+        "total_rss_bytes":   { "type": "integer", "minimum": 0 },
+        "cgroup_path":       { "type": "string" },
+        "oom_kill_count_5m": { "type": "integer", "minimum": 0 },
+        "oom_flags":         { "type": "integer" }
+      }
+    },
+
+    "TcpRetransmitEvent": {
+      "type": "object",
+      "required": ["meta", "src_addr", "dst_addr"],
+      "properties": {
+        "meta":             { "$ref": "#/$defs/EventMetadata" },
+        "src_addr":         { "type": "string" },
+        "src_port":         { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "dst_addr":         { "type": "string" },
+        "dst_port":         { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "protocol":         { "type": "string", "enum": ["TCP", "UDP", "ICMP"] },
+        "tcp_state":        { "type": "integer", "minimum": 0 },
+        "retransmit_count": { "type": "integer", "minimum": 0 },
+        "rtt_us":           { "type": "integer", "minimum": 0 },
+        "rto_us":           { "type": "integer", "minimum": 0 },
+        "snd_cwnd":         { "type": "integer", "minimum": 0 },
+        "sk_backlog":       { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "SchedLatencyEvent": {
+      "type": "object",
+      "required": ["meta", "latency_us"],
+      "properties": {
+        "meta":       { "$ref": "#/$defs/EventMetadata" },
+        "event_type": { "type": "string", "enum": ["SWITCH", "WAKEUP", "MIGRATE", "LATENCY"] },
+        "latency_us": { "type": "integer", "minimum": 0 },
+        "cpu_id":     { "type": "integer", "minimum": 0 },
+        "prev_comm":  { "type": "string" },
+        "prev_pid":   { "type": "integer", "minimum": 0 },
+        "next_comm":  { "type": "string" },
+        "next_pid":   { "type": "integer", "minimum": 0 },
+        "task_prio":  { "type": "integer" },
+        "nvcsw":      { "type": "integer", "minimum": 0 },
+        "nivcsw":     { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "FileAccessEvent": {
+      "type": "object",
+      "required": ["meta", "filepath"],
+      "properties": {
+        "meta":        { "$ref": "#/$defs/EventMetadata" },
+        "filepath":    { "type": "string", "maxLength": 4096 },
+        "flags":       { "type": "integer", "minimum": 0 },
+        "mode":        { "type": "integer", "minimum": 0 },
+        "success":     { "type": "boolean" },
+        "errno_val":   { "type": "integer" },
+        "inode":       { "type": "integer", "minimum": 0 },
+        "mount_point": { "type": "string" },
+        "dev":         { "type": "integer", "minimum": 0 },
+        "access_type": { "type": "string", "enum": ["read", "write", "exec", "open", "unlink"] }
+      }
+    },
+
+    "SyscallEvent": {
+      "type": "object",
+      "required": ["meta", "syscall_nr"],
+      "properties": {
+        "meta":         { "$ref": "#/$defs/EventMetadata" },
+        "syscall_nr":   { "type": "integer" },
+        "syscall_name": { "type": "string" },
+        "ret_val":      { "type": "integer" },
+        "args":         { "type": "array", "items": { "type": "integer" }, "maxItems": 6 },
+        "is_flagged":   { "type": "boolean" },
+        "flag_reason":  { "type": "string" }
+      }
+    },
+
+    "ExecveEvent": {
+      "type": "object",
+      "required": ["meta", "filename"],
+      "properties": {
+        "meta":        { "$ref": "#/$defs/EventMetadata" },
+        "filename":    { "type": "string", "maxLength": 4096 },
+        "args":        { "type": "array", "items": { "type": "string" }, "maxItems": 32 },
+        "env_vars":    { "type": "array", "items": { "type": "string" }, "maxItems": 16 },
+        "is_setuid":   { "type": "boolean" },
+        "is_setgid":   { "type": "boolean" },
+        "return_code": { "type": "integer" },
+        "binary_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "interpreter": { "type": "string" }
+      }
+    },
+
+    "NetworkConnectEvent": {
+      "type": "object",
+      "required": ["meta", "src_addr", "dst_addr"],
+      "properties": {
+        "meta":         { "$ref": "#/$defs/EventMetadata" },
+        "src_addr":     { "type": "string" },
+        "src_port":     { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "dst_addr":     { "type": "string" },
+        "dst_port":     { "type": "integer", "minimum": 0, "maximum": 65535 },
+        "protocol":     { "type": "string", "enum": ["TCP", "UDP", "ICMP"] },
+        "is_outbound":  { "type": "boolean" },
+        "success":      { "type": "boolean" },
+        "bytes_sent":   { "type": "integer", "minimum": 0 },
+        "bytes_recv":   { "type": "integer", "minimum": 0 },
+        "duration_ms":  { "type": "integer", "minimum": 0 },
+        "dst_hostname": { "type": "string" }
+      }
+    }
+  }
+}

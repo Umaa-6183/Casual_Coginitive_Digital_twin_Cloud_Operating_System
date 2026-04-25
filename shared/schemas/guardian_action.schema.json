@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ccdt.io/schemas/guardian_action.schema.json",
+  "title": "CCDTGuardianAction",
+  "description": "CCDT Layer-3 Guardian action result published to Kafka topic ccdt.guardian.actions. Provides complete audit trail for every remediation attempt.",
+  "type": "object",
+
+  "required": ["audit_id", "request", "status", "requested_at", "schema_ver"],
+
+  "properties": {
+    "audit_id":      { "type": "string", "format": "uuid" },
+    "status": {
+      "type": "string",
+      "enum": ["UNKNOWN","PENDING","APPROVED","DENIED","EXECUTING","SUCCEEDED","FAILED","TIMEOUT","ROLLED_BACK","AWAITING_APPROVAL"]
+    },
+    "message":              { "type": "string" },
+    "error_detail":         { "type": "string" },
+    "requested_at":         { "type": "string", "format": "date-time" },
+    "executed_at":          { "type": "string", "format": "date-time" },
+    "completed_at":         { "type": "string", "format": "date-time" },
+    "execution_duration_ms":{ "type": "number", "minimum": 0 },
+    "k8s_resource_version": { "type": "string" },
+    "k8s_uid":              { "type": "string" },
+    "verified_effect":      { "type": "boolean" },
+    "post_action_health":   { "type": "number", "minimum": 0, "maximum": 1 },
+    "verification_note":    { "type": "string" },
+    "was_rolled_back":      { "type": "boolean" },
+    "rollback_reason":      { "type": "string" },
+    "autonomy_mode": {
+      "type": "string",
+      "enum": ["unknown", "supervised", "human-in-loop", "full-auto"]
+    },
+    "approved_by":          { "type": "string" },
+    "incident_id":          { "type": "string" },
+    "schema_ver":           { "type": "string", "const": "1.0" },
+    "request":              { "$ref": "#/$defs/ActionRequest" }
+  },
+
+  "$defs": {
+    "ActionRequest": {
+      "type": "object",
+      "required": ["request_id", "action_name", "target_namespace"],
+      "properties": {
+        "request_id":         { "type": "string", "format": "uuid" },
+        "requested_at":       { "type": "string", "format": "date-time" },
+        "action_name": {
+          "type": "string",
+          "enum": [
+            "UNKNOWN",
+            "RESTART_POD","EVICT_POD","KILL_POD","EXEC_COMMAND",
+            "SCALE_UP_REPLICAS","SCALE_DOWN_REPLICAS","ROLLBACK_DEPLOYMENT",
+            "PATCH_RESOURCE_LIMITS","PAUSE_DEPLOYMENT","RESUME_DEPLOYMENT","UPDATE_HPA_BOUNDS",
+            "CORDON_NODE","UNCORDON_NODE","DRAIN_NODE",
+            "ISOLATE_CONTAINER","REMOVE_ISOLATION","APPLY_NETWORK_POLICY",
+            "ROTATE_SECRET","PATCH_CONFIGMAP",
+            "THROTTLE_CPU","INCREASE_OOM_THRESHOLD"
+          ]
+        },
+        "action_label":       { "type": "string" },
+        "target_node_id":     { "type": "string" },
+        "target_node_name":   { "type": "string" },
+        "target_namespace":   { "type": "string" },
+        "target_resource":    { "type": "string" },
+        "inference_id":       { "type": "string" },
+        "trigger_class":      { "type": "string", "enum": ["UNKNOWN","HEALTHY","FAULT","ATTACK"] },
+        "trigger_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "root_cause_node":    { "type": "string" },
+        "policy_version":     { "type": "string" },
+        "rl_q_value":         { "type": "number" },
+        "autonomy_mode":      { "type": "string" },
+        "requester":          { "type": "string" },
+        "extra_params":       { "type": "object", "additionalProperties": { "type": "string" } },
+        "ghost_result":       { "$ref": "#/$defs/GhostSimulationResult" }
+      }
+    },
+
+    "GhostSimulationResult": {
+      "type": "object",
+      "properties": {
+        "risk_score":             { "type": "number", "minimum": 0, "maximum": 1 },
+        "risk_category":          { "type": "string", "enum": ["UNKNOWN","VERY_LOW","LOW","MEDIUM","HIGH","VERY_HIGH"] },
+        "confidence":             { "type": "number", "minimum": 0, "maximum": 1 },
+        "mttr_delta_seconds":     { "type": "number" },
+        "traffic_impact_pct":     { "type": "number", "minimum": 0, "maximum": 100 },
+        "availability_impact":    { "type": "number", "minimum": 0, "maximum": 1 },
+        "affected_pod_count":     { "type": "integer", "minimum": 0 },
+        "collateral_node_ids":    { "type": "array", "items": { "type": "string" } },
+        "collateral_node_names":  { "type": "array", "items": { "type": "string" } },
+        "opa_violations":         { "type": "array", "items": { "type": "string" } },
+        "opa_approved":           { "type": "boolean" },
+        "dry_run_succeeded":      { "type": "boolean" },
+        "dry_run_error":          { "type": "string" },
+        "recommended_action":     { "type": "string" },
+        "recommendation_reason":  { "type": "string" },
+        "projected_status":       { "type": "string" },
+        "sim_duration_ms":        { "type": "number", "minimum": 0 },
+        "sim_timestamp":          { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

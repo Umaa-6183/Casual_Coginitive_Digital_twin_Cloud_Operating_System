@@ -1,0 +1,392 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// CCDT — actions.proto  v1.0
+// Protocol Buffer definitions for Layer-3 Guardian remediation actions.
+//
+// Flow:  Layer-2 GNN inference ──► Layer-3 Guardian decides action
+//        Layer-3 Ghost preview  ──► OPA policy gate
+//        Layer-3 executes       ──► Kafka ccdt.guardian.actions
+//        Layer-4 Co-Pilot reads ──► explains to operator
+//
+// Code generation:
+//   protoc --python_out=generated --pyi_out=generated \
+//          --grpc_python_out=generated \
+//          --proto_path=. actions.proto
+// ═══════════════════════════════════════════════════════════════════════════════
+syntax = "proto3";
+
+package ccdt.actions;
+
+option go_package   = "github.com/your-org/ccdt/shared/proto/actions;actionspb";
+option java_package = "io.ccdt.actions";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "graph.proto";
+
+// ── Enumerations ──────────────────────────────────────────────────────────────
+
+// All supported remediation actions
+enum ActionName {
+  ACTION_UNKNOWN                = 0;
+
+  // Pod-level
+  ACTION_RESTART_POD            = 1;   // delete pod → let controller recreate
+  ACTION_EVICT_POD              = 2;   // graceful eviction via Eviction API
+  ACTION_KILL_POD               = 3;   // SIGKILL (zero grace period)
+  ACTION_EXEC_COMMAND           = 4;   // exec diagnostic command in container
+
+  // Deployment-level
+  ACTION_SCALE_UP_REPLICAS      = 10;  // increase replica count
+  ACTION_SCALE_DOWN_REPLICAS    = 11;  // decrease replica count
+  ACTION_ROLLBACK_DEPLOYMENT    = 12;  // kubectl rollout undo
+  ACTION_PATCH_RESOURCE_LIMITS  = 13;  // adjust CPU/memory limits
+  ACTION_PAUSE_DEPLOYMENT       = 14;  // scale to 0 replicas
+  ACTION_RESUME_DEPLOYMENT      = 15;  // restore previous replica count
+  ACTION_UPDATE_HPA_BOUNDS      = 16;  // tune HPA min/max
+
+  // Node-level
+  ACTION_CORDON_NODE            = 20;  // mark node unschedulable
+  ACTION_UNCORDON_NODE          = 21;
+  ACTION_DRAIN_NODE             = 22;  // safe workload migration
+
+  // Network-level
+  ACTION_ISOLATE_CONTAINER      = 30;  // apply deny-all NetworkPolicy to pod
+  ACTION_REMOVE_ISOLATION       = 31;  // remove isolation NetworkPolicy
+  ACTION_APPLY_NETWORK_POLICY   = 32;  // apply custom NetworkPolicy
+
+  // Secret / Config
+  ACTION_ROTATE_SECRET          = 40;  // trigger secret rotation
+  ACTION_PATCH_CONFIGMAP        = 41;  // update ConfigMap value
+
+  // HPA
+  ACTION_THROTTLE_CPU           = 50;  // inject CPU limit via LimitRange patch
+  ACTION_INCREASE_OOM_THRESHOLD = 51;  // raise memory limit
+}
+
+// Action execution status
+enum ActionStatus {
+  STATUS_UNKNOWN   = 0;
+  STATUS_PENDING   = 1;   // queued, awaiting OPA gate
+  STATUS_APPROVED  = 2;   // OPA approved, executing
+  STATUS_DENIED    = 3;   // OPA denied
+  STATUS_EXECUTING = 4;   // Kubernetes API call in flight
+  STATUS_SUCCEEDED = 5;   // confirmed success
+  STATUS_FAILED    = 6;   // execution error
+  STATUS_TIMEOUT   = 7;   // timed out waiting for effect
+  STATUS_ROLLED_BACK = 8; // auto-rollback triggered
+  STATUS_AWAITING_APPROVAL = 9; // human approval required (supervised mode)
+}
+
+// Autonomy level at time of action
+enum AutonomyMode {
+  AUTONOMY_UNKNOWN         = 0;
+  AUTONOMY_SUPERVISED      = 1;  // human approves everything
+  AUTONOMY_HUMAN_IN_LOOP   = 2;  // auto for low-risk, human for high-risk
+  AUTONOMY_FULL_AUTO       = 3;  // fully autonomous
+}
+
+// Risk category assigned by the Ghost simulator
+enum RiskCategory {
+  RISK_UNKNOWN   = 0;
+  RISK_VERY_LOW  = 1;   // < 0.15
+  RISK_LOW       = 2;   // 0.15 – 0.35
+  RISK_MEDIUM    = 3;   // 0.35 – 0.60
+  RISK_HIGH      = 4;   // 0.60 – 0.80
+  RISK_VERY_HIGH = 5;   // > 0.80
+}
+
+// ── Core action parameter types ───────────────────────────────────────────────
+
+message ScaleParameters {
+  int32  current_replicas  = 1;
+  int32  target_replicas   = 2;
+  string deployment_name   = 3;
+  string namespace         = 4;
+  // Reason for the scale decision
+  string reason            = 5;
+}
+
+message RollbackParameters {
+  string deployment_name   = 1;
+  string namespace         = 2;
+  // Target revision (0 = previous revision)
+  int32  target_revision   = 3;
+  string current_image     = 4;
+  string target_image      = 5;
+}
+
+message ExecParameters {
+  string pod_name          = 1;
+  string container_name    = 2;
+  string namespace         = 3;
+  // Command to execute (tokenised)
+  repeated string command  = 4;
+  // Timeout for the exec session
+  google.protobuf.Duration timeout = 5;
+}
+
+message NetworkPolicyParameters {
+  string pod_name                = 1;
+  string namespace               = 2;
+  // Serialised YAML/JSON NetworkPolicy spec to apply
+  string policy_spec_json        = 3;
+  // Existing policy name to remove (for ACTION_REMOVE_ISOLATION)
+  string existing_policy_name    = 4;
+  // Direction: ingress | egress | both
+  string direction               = 5;
+}
+
+message ResourceLimitParameters {
+  string resource_name     = 1;   // deployment / pod name
+  string namespace         = 2;
+  string container_name    = 3;
+  // New limits (Kubernetes quantity string e.g. "2", "4Gi")
+  string cpu_limit         = 4;
+  string memory_limit      = 5;
+  // Original limits (for rollback)
+  string original_cpu      = 6;
+  string original_memory   = 7;
+}
+
+message NodeParameters {
+  string node_name         = 1;
+  bool   drain_grace       = 2;   // graceful drain or immediate
+  google.protobuf.Duration drain_timeout = 3;
+}
+
+message SecretRotationParameters {
+  string secret_name       = 1;
+  string namespace         = 2;
+  // Rotation method: aws-iam | vault | manual
+  string rotation_method   = 3;
+}
+
+message HpaParameters {
+  string hpa_name          = 1;
+  string namespace         = 2;
+  int32  min_replicas      = 3;
+  int32  max_replicas      = 4;
+  int32  original_min      = 5;
+  int32  original_max      = 6;
+}
+
+// ── Ghost simulation result ───────────────────────────────────────────────────
+// The Guardian runs every proposed action through a Kubernetes dry-run
+// simulation ("Ghost") before submitting to OPA for approval.
+
+message GhostSimulationResult {
+  // Risk score from simulation [0, 1] — higher = more dangerous
+  float                     risk_score            = 1;
+  RiskCategory              risk_category         = 2;
+  // Confidence in the simulation result [0, 1]
+  float                     confidence            = 3;
+
+  // Impact estimates
+  float                     mttr_delta_seconds    = 4;  // +/- on time-to-recovery
+  float                     traffic_impact_pct    = 5;  // % traffic that will be affected
+  float                     availability_impact   = 6;  // expected uptime loss fraction
+  uint32                    affected_pod_count    = 7;
+
+  // Nodes that would be affected (blast radius)
+  repeated string           collateral_node_ids   = 8;
+  repeated string           collateral_node_names = 9;
+
+  // OPA policy check results
+  repeated string           opa_violations        = 10;
+  bool                      opa_approved          = 11;
+
+  // Whether Kubernetes dry-run succeeded
+  bool                      dry_run_succeeded     = 12;
+  string                    dry_run_error         = 13;
+
+  // Recommended alternative if this action was too risky
+  string                    recommended_action    = 14;
+  string                    recommendation_reason = 15;
+
+  // Projected state after action
+  string                    projected_status      = 16;
+
+  // Simulation performance
+  float                     sim_duration_ms       = 17;
+  google.protobuf.Timestamp sim_timestamp         = 18;
+}
+
+// ── Action request ────────────────────────────────────────────────────────────
+// Constructed by the RL policy and passed to the OPA gate + executor.
+
+message ActionRequest {
+  // Unique request ID (UUID4)
+  string                    request_id       = 1;
+  google.protobuf.Timestamp requested_at     = 2;
+
+  // Action identity
+  ActionName                action_name      = 3;
+  // Human-readable action label (e.g. "restart_pod")
+  string                    action_label     = 4;
+
+  // Target
+  string                    target_node_id   = 5;   // topology node ID
+  string                    target_node_name = 6;
+  string                    target_namespace = 7;
+  string                    target_resource  = 8;   // k8s resource name
+
+  // Context from GNN inference that triggered this action
+  string                    inference_id     = 9;
+  ccdt.graph.NodeClass      trigger_class    = 10;
+  float                     trigger_confidence = 11;
+  string                    root_cause_node  = 12;
+
+  // RL policy details
+  string                    policy_version   = 13;
+  float                     rl_q_value       = 14;   // Q-value from RL model
+
+  // Autonomy context
+  AutonomyMode              autonomy_mode    = 15;
+  string                    requester        = 16;   // "rl-policy" | username
+
+  // Type-specific parameters — exactly one should be set
+  oneof parameters {
+    ScaleParameters          scale         = 20;
+    RollbackParameters       rollback      = 21;
+    ExecParameters           exec_cmd      = 22;
+    NetworkPolicyParameters  network       = 23;
+    ResourceLimitParameters  resource      = 24;
+    NodeParameters           node          = 25;
+    SecretRotationParameters secret        = 26;
+    HpaParameters            hpa           = 27;
+  }
+
+  // Ghost simulation result (attached before OPA gate)
+  GhostSimulationResult     ghost_result   = 30;
+
+  // Fallback generic parameters (for simple actions)
+  map<string, string>       extra_params   = 31;
+}
+
+// ── Action execution result ───────────────────────────────────────────────────
+// Published to Kafka ccdt.guardian.actions after execution completes.
+
+message ActionResult {
+  // Unique audit ID (UUID4)
+  string                    audit_id           = 1;
+  // Original request
+  ActionRequest             request            = 2;
+
+  // Execution outcome
+  ActionStatus              status             = 3;
+  string                    message            = 4;   // human-readable result
+  string                    error_detail       = 5;   // error stacktrace if failed
+
+  // Timing
+  google.protobuf.Timestamp requested_at       = 6;
+  google.protobuf.Timestamp executed_at        = 7;
+  google.protobuf.Timestamp completed_at       = 8;
+  google.protobuf.Duration  execution_duration = 9;
+
+  // Kubernetes API response details
+  string                    k8s_resource_version = 10;
+  string                    k8s_uid            = 11;
+
+  // Post-execution verification
+  bool                      verified_effect    = 12;   // confirmed target improved
+  float                     post_action_health = 13;   // node health score after
+  string                    verification_note  = 14;
+
+  // Whether a rollback was applied
+  bool                      was_rolled_back    = 15;
+  string                    rollback_reason    = 16;
+
+  // Autonomy level when executed
+  AutonomyMode              autonomy_mode      = 17;
+  // Human approver (if supervised mode)
+  string                    approved_by        = 18;
+
+  // Incident correlation
+  string                    incident_id        = 19;
+  string                    schema_ver         = 20;
+}
+
+// ── Action history entry ─────────────────────────────────────────────────────
+// Used by Guardian to detect retry loops (≥3 identical actions in 10 min).
+
+message ActionHistoryEntry {
+  string                    action_name   = 1;
+  string                    target_node   = 2;
+  ActionStatus              status        = 3;
+  google.protobuf.Timestamp executed_at   = 4;
+  // Age in minutes from now (used in OPA lateral_movement policy)
+  float                     age_minutes   = 5;
+}
+
+// ── Approval request (supervised / human-in-loop mode) ───────────────────────
+
+message ApprovalRequest {
+  string                    approval_id     = 1;
+  ActionRequest             action_request  = 2;
+  GhostSimulationResult     ghost_result    = 3;
+  string                    reasoning       = 4;  // LLM-generated rationale
+  google.protobuf.Timestamp expires_at      = 5;  // auto-deny after expiry
+  // Notification channel
+  string                    notify_channel  = 6;  // Slack channel / email
+  string                    notify_webhook  = 7;
+}
+
+message ApprovalResponse {
+  string                    approval_id   = 1;
+  bool                      approved      = 2;
+  string                    approver      = 3;  // username or "auto-timeout-deny"
+  string                    reason        = 4;
+  google.protobuf.Timestamp responded_at  = 5;
+}
+
+// ── gRPC service definition ───────────────────────────────────────────────────
+
+service GuardianService {
+  // Submit an action for OPA gate + execution
+  rpc ExecuteAction(ActionRequest) returns (ActionResult);
+
+  // Dry-run an action through the Ghost simulator only (no execution)
+  rpc SimulateAction(ActionRequest) returns (GhostSimulationResult);
+
+  // Get recent action history for a node
+  rpc GetActionHistory(ActionHistoryRequest) returns (ActionHistoryResponse);
+
+  // Stream live action results (for dashboard)
+  rpc StreamActionResults(StreamActionsRequest) returns (stream ActionResult);
+
+  // Submit human approval decision
+  rpc RespondToApproval(ApprovalResponse) returns (ActionResult);
+
+  // Get pending approvals
+  rpc GetPendingApprovals(PendingApprovalsRequest) returns (PendingApprovalsResponse);
+
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message ActionHistoryRequest {
+  string  node_name            = 1;
+  uint32  limit                = 2;
+  float   within_minutes       = 3;
+}
+
+message ActionHistoryResponse {
+  repeated ActionHistoryEntry  entries      = 1;
+  uint32                       total_count  = 2;
+}
+
+message StreamActionsRequest {
+  repeated ActionStatus        filter_status = 1;  // empty = all statuses
+}
+
+message PendingApprovalsRequest  { string namespace = 1; }
+message PendingApprovalsResponse { repeated ApprovalRequest approvals = 1; }
+
+message HealthCheckRequest  {}
+message HealthCheckResponse {
+  bool   healthy          = 1;
+  string status           = 2;
+  string opa_status       = 3;
+  string rl_model_version = 4;
+  string autonomy_mode    = 5;
+}

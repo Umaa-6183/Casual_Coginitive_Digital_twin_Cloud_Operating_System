@@ -1,0 +1,285 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// CCDT — graph.proto  v1.0
+// Protocol Buffer definitions for Layer-2 Causal GNN topology and inference.
+//
+// Flow:  Layer-2 GNN ──► Kafka ccdt.gnn.inference ──► Layer-3 Guardian
+//                                                  ──► Layer-4 Co-Pilot
+//                                                  ──► Dashboard WebSocket
+// ═══════════════════════════════════════════════════════════════════════════════
+syntax = "proto3";
+
+package ccdt.graph;
+
+option go_package   = "github.com/your-org/ccdt/shared/proto/graph;graphpb";
+option java_package = "io.ccdt.graph";
+
+import "google/protobuf/timestamp.proto";
+
+// ── Enumerations ──────────────────────────────────────────────────────────────
+
+// Node classification from the GNN — maps to Layer-3 action policy
+enum NodeClass {
+  NODE_CLASS_UNKNOWN = 0;
+  NODE_CLASS_HEALTHY = 1;  // nominal operation
+  NODE_CLASS_FAULT   = 2;  // software fault (OOM, crash loop, latency spike)
+  NODE_CLASS_ATTACK  = 3;  // active security threat
+}
+
+// Graph-level incident type
+enum IncidentType {
+  INCIDENT_UNKNOWN        = 0;
+  INCIDENT_NONE           = 1;   // no active incident
+  INCIDENT_FAULT          = 2;   // service fault
+  INCIDENT_ATTACK         = 3;   // security attack
+  INCIDENT_FAULT_ATTACK   = 4;   // fault + attack simultaneously
+  INCIDENT_PERFORMANCE    = 5;   // performance degradation (latency/throughput)
+  INCIDENT_RESOURCE       = 6;   // resource exhaustion (OOM, disk, CPU)
+}
+
+// Node type in the Kubernetes topology graph
+enum NodeType {
+  NODE_TYPE_UNKNOWN    = 0;
+  NODE_TYPE_SERVICE    = 1;   // Kubernetes Service + Deployment
+  NODE_TYPE_POD        = 2;   // individual Pod
+  NODE_TYPE_DATABASE   = 3;   // stateful database workload
+  NODE_TYPE_CACHE      = 4;   // Redis/Memcached
+  NODE_TYPE_QUEUE      = 5;   // Kafka/RabbitMQ broker
+  NODE_TYPE_INGRESS    = 6;   // Ingress controller
+  NODE_TYPE_EXTERNAL   = 7;   // external dependency (API, CDN)
+  NODE_TYPE_NODE       = 8;   // Kubernetes worker node
+}
+
+// Edge type in the topology graph
+enum EdgeType {
+  EDGE_TYPE_UNKNOWN     = 0;
+  EDGE_TYPE_HTTP        = 1;   // HTTP/REST call
+  EDGE_TYPE_GRPC        = 2;   // gRPC call
+  EDGE_TYPE_DATABASE    = 3;   // DB query
+  EDGE_TYPE_QUEUE       = 4;   // Kafka produce/consume
+  EDGE_TYPE_CACHE       = 5;   // Cache get/set
+  EDGE_TYPE_DNS         = 6;   // DNS dependency
+  EDGE_TYPE_COLOCATED   = 7;   // same node — potential interference
+}
+
+// Causal direction between graph nodes
+enum CausalDirection {
+  CAUSAL_UNKNOWN    = 0;
+  CAUSAL_CAUSES     = 1;   // A → B (A causes B)
+  CAUSAL_CAUSED_BY  = 2;   // A ← B (A caused by B)
+  CAUSAL_CORRELATED = 3;   // A ↔ B (correlated but direction unclear)
+}
+
+// ── Node feature vector ────────────────────────────────────────────────────────
+// 16-dimensional feature vector per node (matches GNN model input)
+
+message NodeFeatures {
+  // Resource metrics (normalized 0..1)
+  float cpu_utilization      = 1;   // CPU usage %
+  float memory_utilization   = 2;   // RSS / limit
+  float net_rx_bytes_rate    = 3;   // bytes/s ingress (log-normalized)
+  float net_tx_bytes_rate    = 4;   // bytes/s egress
+  float disk_read_rate       = 5;   // bytes/s disk reads
+  float disk_write_rate      = 6;   // bytes/s disk writes
+
+  // Kubernetes health signals
+  float restart_count        = 7;   // container restart rate (log-normalized)
+  float ready_replicas_ratio = 8;   // ready / desired
+  float pod_age_seconds      = 9;   // pod age (log-normalized)
+
+  // eBPF-derived security signals (normalized)
+  float capability_event_rate  = 10;  // capability checks / sec
+  float oom_kill_rate          = 11;  // OOM kills / 5 min
+  float tcp_retransmit_rate    = 12;  // retransmits / sec
+  float sched_latency_p99_us   = 13;  // scheduler P99 latency (log-normalized)
+  float sensitive_file_rate    = 14;  // sensitive file accesses / sec
+  float syscall_anomaly_score  = 15;  // anomaly score from syscall profile
+  float execve_rate            = 16;  // execve events / sec (abnormal spawning)
+}
+
+// ── Edge feature vector ───────────────────────────────────────────────────────
+// 4-dimensional edge features
+
+message EdgeFeatures {
+  float request_rate        = 1;   // requests/s on this edge
+  float error_rate          = 2;   // error fraction 0..1
+  float latency_p99_ms      = 3;   // P99 latency (log-normalized)
+  float bandwidth_bytes_sec = 4;   // bytes/s (log-normalized)
+}
+
+// ── Topology node ─────────────────────────────────────────────────────────────
+
+message TopologyNode {
+  // Unique node ID within the cluster topology graph
+  string           node_id       = 1;
+  // Human-readable service name
+  string           name          = 2;
+  NodeType         node_type     = 3;
+  // Kubernetes metadata
+  string           namespace     = 4;
+  string           pod_name      = 5;
+  string           deployment    = 6;
+  string           node_name     = 7;   // Kubernetes worker node
+  // IP address(es)
+  repeated string  pod_ips       = 8;
+  // Current GNN classification
+  NodeClass        node_class    = 9;
+  // GNN classification confidence [0, 1]
+  float            class_confidence = 10;
+  // Node feature vector for GNN input
+  NodeFeatures     features      = 11;
+  // Whether this node is the identified root cause
+  bool             is_root_cause = 12;
+  // Isolation state (set by Guardian after action)
+  bool             is_isolated   = 13;
+  // Additional labels from Kubernetes metadata
+  map<string, string> labels     = 14;
+}
+
+// ── Topology edge ─────────────────────────────────────────────────────────────
+
+message TopologyEdge {
+  string       edge_id         = 1;
+  string       source_node_id  = 2;
+  string       target_node_id  = 3;
+  EdgeType     edge_type       = 4;
+  EdgeFeatures features        = 5;
+  // Whether a causal relationship was detected on this edge
+  bool         is_causal       = 6;
+  CausalDirection causal_direction = 7;
+  // Edge weight learned by the GNN
+  float        gnn_weight      = 8;
+}
+
+// ── Causal chain node ─────────────────────────────────────────────────────────
+
+message CausalChainNode {
+  string   node_id      = 1;
+  string   node_name    = 2;
+  NodeClass node_class  = 3;
+  // Contribution to the incident (fraction of causal influence)
+  float    causal_score = 4;
+  // Do-calculus probability P(Y | do(X)) — counterfactual estimate
+  float    do_calculus_prob = 5;
+  // Human-readable explanation for this node's role
+  string   explanation  = 6;
+  // Depth in the causal chain (0 = root cause)
+  uint32   depth        = 7;
+}
+
+// ── GNN inference result ──────────────────────────────────────────────────────
+// Published to Kafka ccdt.gnn.inference every ~5 seconds when an incident
+// is detected (confidence >= 0.65) or every 30 s as a health-check heartbeat.
+
+message GnnInferenceResult {
+  // Unique inference ID (used as Kafka message key)
+  string                    inference_id         = 1;
+  google.protobuf.Timestamp timestamp            = 2;
+
+  // Graph-level classification
+  IncidentType              incident_type        = 3;
+  float                     graph_confidence     = 4;  // [0, 1]
+
+  // Root cause identification
+  string                    root_cause_node_id   = 5;
+  string                    root_cause_node_name = 6;
+  float                     root_cause_confidence = 7;  // [0, 1]
+
+  // Blast radius — set of affected nodes
+  repeated string           blast_radius_node_ids = 8;
+  uint32                    blast_radius_count    = 9;
+
+  // Ordered causal chain (root cause first)
+  repeated CausalChainNode  causal_chain         = 10;
+
+  // All node classifications
+  repeated TopologyNode     node_classifications = 11;
+
+  // Top contributing features (for Co-Pilot explanation)
+  repeated TopFeature       top_features         = 12;
+
+  // Counterfactual: "if node X had been healthy, would incident have occurred?"
+  repeated CounterfactualResult counterfactuals  = 13;
+
+  // Performance metrics for this inference run
+  float                     inference_latency_ms = 14;
+  uint32                    node_count           = 15;
+  uint32                    edge_count           = 16;
+
+  // Whether this is a heartbeat (no incident) vs active incident alert
+  bool                      is_heartbeat         = 17;
+  string                    schema_ver           = 18;
+}
+
+// ── Top contributing feature ──────────────────────────────────────────────────
+
+message TopFeature {
+  string feature_name  = 1;   // e.g. "oom_kill_rate", "cpu_utilization"
+  string node_name     = 2;
+  float  importance    = 3;   // normalized importance score [0, 1]
+  float  value         = 4;   // raw feature value
+  float  threshold     = 5;   // anomaly threshold that was exceeded
+  string explanation   = 6;   // human-readable: "OOM kill rate 3.2× above baseline"
+}
+
+// ── Counterfactual result (Pearl do-calculus) ─────────────────────────────────
+
+message CounterfactualResult {
+  string  node_id                    = 1;
+  string  node_name                  = 2;
+  // P(incident | do(node = healthy)) — probability incident disappears
+  float   incident_prob_if_healthy   = 3;
+  // Actual incident probability given current state
+  float   incident_prob_actual       = 4;
+  // Causal effect estimate: actual - counterfactual
+  float   causal_effect              = 5;
+  string  explanation                = 6;
+}
+
+// ── Topology snapshot (requested on-demand via gRPC or REST) ──────────────────
+
+message TopologySnapshot {
+  string                    snapshot_id   = 1;
+  google.protobuf.Timestamp timestamp     = 2;
+  repeated TopologyNode     nodes         = 3;
+  repeated TopologyEdge     edges         = 4;
+  IncidentType              incident_type = 5;
+  string                    cluster_name  = 6;
+  string                    schema_ver    = 7;
+}
+
+// ── gRPC service definition ───────────────────────────────────────────────────
+
+service GnnInferenceService {
+  // Get the latest GNN inference result
+  rpc GetLatestInference(GetInferenceRequest)
+      returns (GnnInferenceResult);
+
+  // Subscribe to real-time inference updates (server-streaming)
+  rpc StreamInferences(StreamInferenceRequest)
+      returns (stream GnnInferenceResult);
+
+  // Get the current live topology snapshot
+  rpc GetTopology(GetTopologyRequest)
+      returns (TopologySnapshot);
+
+  // Run a counterfactual query ("what if node X were healthy?")
+  rpc RunCounterfactual(CounterfactualQuery)
+      returns (CounterfactualResponse);
+}
+
+message GetInferenceRequest  { string cluster = 1; }
+message StreamInferenceRequest {
+  string cluster            = 1;
+  float  min_confidence     = 2;   // only stream if confidence >= threshold
+}
+message GetTopologyRequest   { string cluster = 1; }
+
+message CounterfactualQuery {
+  string node_id            = 1;
+  string hypothetical_class = 2;  // e.g. "healthy"
+}
+
+message CounterfactualResponse {
+  repeated CounterfactualResult results = 1;
+  string explanation                    = 2;
+}

@@ -1,0 +1,96 @@
+{
+  "scenario_id": "fault_003",
+  "description": "CPU starvation causing scheduler latency spike on shared node",
+  "nodes": [
+    {
+      "id": "notify-svc",
+      "label": "Notify Service",
+      "status": "critical",
+      "layer": "service",
+      "cpu": 98,
+      "mem": 68,
+      "restarts": 2,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 0,
+      "sched_latency_p99_ms": 320,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 2,
+      "node_label": 1
+    },
+    {
+      "id": "kafka",
+      "label": "Kafka Broker",
+      "status": "warning",
+      "layer": "system",
+      "cpu": 61,
+      "mem": 70,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 4,
+      "sched_latency_p99_ms": 28,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 3,
+      "node_label": 1
+    },
+    {
+      "id": "monitoring",
+      "label": "VictoriaMetrics",
+      "status": "healthy",
+      "layer": "system",
+      "cpu": 22,
+      "mem": 41,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 0,
+      "sched_latency_p99_ms": 4,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 2,
+      "node_label": 0
+    },
+    {
+      "id": "order-svc",
+      "label": "Order Service",
+      "status": "healthy",
+      "layer": "service",
+      "cpu": 45,
+      "mem": 55,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 0,
+      "sched_latency_p99_ms": 8,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 2,
+      "node_label": 0
+    }
+  ],
+  "edges": [
+    {
+      "from": "order-svc",
+      "to": "notify-svc",
+      "latency_ms": 280,
+      "error_rate": 0.08,
+      "request_rate": 120,
+      "causal": true
+    },
+    {
+      "from": "notify-svc",
+      "to": "kafka",
+      "latency_ms": 88,
+      "error_rate": 0.03,
+      "request_rate": 180,
+      "causal": true
+    },
+    {
+      "from": "monitoring",
+      "to": "kafka",
+      "latency_ms": 1,
+      "error_rate": 0.0,
+      "request_rate": 40,
+      "causal": false
+    }
+  ]
+}

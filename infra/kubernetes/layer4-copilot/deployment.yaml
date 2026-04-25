@@ -1,0 +1,330 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT Layer-4 Co-Pilot — Deployment + Service + HPA + ConfigMap
+# ═══════════════════════════════════════════════════════════════════════════════
+# Runs the Claude AI Co-Pilot FastAPI server.
+# Requires:
+#   • ANTHROPIC_API_KEY secret   (outbound HTTPS to api.anthropic.com)
+#   • Access to GNN (L2), Guardian (L3), eBPF (L1) over cluster DNS
+#   • No elevated RBAC — read-only observer
+# ═══════════════════════════════════════════════════════════════════════════════
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: layer4-copilot
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:      layer4-copilot
+    app.kubernetes.io/component: copilot
+    app.kubernetes.io/part-of:   ccdt-platform
+  annotations:
+    description: "Layer-4 Co-Pilot — Claude AI operator interface"
+
+---
+# ── Role: read-only access to ccdt namespace resources ───────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: layer4-copilot-reader
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:    layer4-copilot
+    app.kubernetes.io/part-of: ccdt-platform
+rules:
+  - apiGroups: [""]
+    resources:  [pods, services, endpoints, configmaps, events]
+    verbs:      [get, list, watch]
+  - apiGroups: [apps]
+    resources:  [deployments, replicasets, daemonsets, statefulsets]
+    verbs:      [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources:  [horizontalpodautoscalers]
+    verbs:      [get, list, watch]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: layer4-copilot-reader
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:    layer4-copilot
+    app.kubernetes.io/part-of: ccdt-platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind:     Role
+  name:     layer4-copilot-reader
+subjects:
+  - kind:      ServiceAccount
+    name:      layer4-copilot
+    namespace: ccdt
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: layer4-copilot
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:      layer4-copilot
+    app.kubernetes.io/component: copilot
+    app.kubernetes.io/part-of:   ccdt-platform
+    app.kubernetes.io/version:   "1.0.0"
+  annotations:
+    description: "CCDT Layer-4 Claude AI Co-Pilot — natural language cluster intelligence"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: layer4-copilot
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge:       1
+      maxUnavailable: 0
+
+  template:
+    metadata:
+      labels:
+        app:                         layer4-copilot
+        app.kubernetes.io/name:      layer4-copilot
+        app.kubernetes.io/component: copilot
+        app.kubernetes.io/part-of:   ccdt-platform
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "9090"
+        prometheus.io/path:   "/metrics"
+
+    spec:
+      serviceAccountName: layer4-copilot
+
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: layer4-copilot
+                topologyKey: kubernetes.io/hostname
+
+      # Wait for Guardian to be ready before Co-Pilot starts
+      initContainers:
+        - name: wait-for-guardian
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until wget -qO- http://layer3-guardian:8002/ready >/dev/null 2>&1; do
+                echo "Waiting for Layer-3 Guardian..."
+                sleep 5
+              done
+              echo "Guardian ready — starting Co-Pilot"
+
+      containers:
+        - name: copilot
+          image: ccdt/layer4-copilot:1.0.0
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - python
+            - -m
+            - uvicorn
+            - copilot:app
+            - --host=0.0.0.0
+            - --port=8003
+            - --workers=2
+            - --log-level=info
+
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ccdt-anthropic-credentials
+                  key:  api-key
+            - name: CLAUDE_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: layer4-copilot-config
+                  key:  claude-model
+                  optional: true
+            - name: GNN_SERVICE_URL
+              value: http://layer2-cognitive:8001
+            - name: GUARDIAN_SERVICE_URL
+              value: http://layer3-guardian:8002
+            - name: EBPF_SERVICE_URL
+              value: http://layer1-nervous:9100
+            - name: API_GATEWAY_URL
+              value: http://api-gateway:8000
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                secretKeyRef:
+                  name: ccdt-kafka-credentials
+                  key:  bootstrap-servers
+            - name: KAFKA_TOPIC_INFER
+              value: ccdt.gnn.inference
+            - name: MAX_TOKENS
+              value: "2048"
+            - name: MAX_HISTORY_TURNS
+              value: "20"
+            - name: AUTO_REPORT_CONFIDENCE
+              value: "0.85"
+            - name: CONTEXT_FETCH_TIMEOUT_S
+              value: "3.0"
+            - name: PORT
+              value: "8003"
+            - name: LOG_LEVEL
+              value: info
+
+          ports:
+            - name:          http
+              containerPort: 8003
+              protocol:      TCP
+            - name:          metrics
+              containerPort: 9090
+              protocol:      TCP
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 30
+            periodSeconds:       20
+            failureThreshold:    3
+            timeoutSeconds:      10
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8003
+            initialDelaySeconds: 15
+            periodSeconds:       10
+            failureThreshold:    3
+
+          resources:
+            requests:
+              cpu:    "250m"
+              memory: "512Mi"
+            limits:
+              cpu:    "2000m"
+              memory: "2Gi"
+
+          securityContext:
+            runAsNonRoot:             true
+            runAsUser:                1000
+            runAsGroup:               1000
+            readOnlyRootFilesystem:   true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+
+          volumeMounts:
+            - name:      tmp
+              mountPath: /tmp
+
+      terminationGracePeriodSeconds: 30
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+---
+# ── Service ───────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: layer4-copilot
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:      layer4-copilot
+    app.kubernetes.io/component: copilot
+    app.kubernetes.io/part-of:   ccdt-platform
+spec:
+  selector:
+    app: layer4-copilot
+  ports:
+    - name:       http
+      port:       8003
+      targetPort: http
+      protocol:   TCP
+    - name:       metrics
+      port:       9090
+      targetPort: metrics
+      protocol:   TCP
+  type: ClusterIP
+
+---
+# ── HPA: scale on Claude API call rate ────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: layer4-copilot
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:    layer4-copilot
+    app.kubernetes.io/part-of: ccdt-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind:       Deployment
+    name:       layer4-copilot
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type:               Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type:               Utilization
+          averageUtilization: 75
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 180
+
+---
+# ── ConfigMap ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: layer4-copilot-config
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:    layer4-copilot
+    app.kubernetes.io/part-of: ccdt-platform
+data:
+  claude-model:              "claude-sonnet-4-20250514"
+  max-tokens:                "2048"
+  max-history-turns:         "20"
+  auto-report-confidence:    "0.85"
+  context-fetch-timeout-s:   "3.0"
+
+---
+# ── PodDisruptionBudget ───────────────────────────────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: layer4-copilot
+  namespace: ccdt
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: layer4-copilot

@@ -1,0 +1,395 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT Layer-3 Guardian — Deployment + Service + ServiceAccount + RBAC
+# ═══════════════════════════════════════════════════════════════════════════════
+# Runs the RL-agent + Ghost Preview + OPA evaluator + K8s action executor.
+# Needs elevated RBAC to execute remediation actions:
+#   • create/delete Pods                   (restart_pod, kill_process)
+#   • patch Deployments                    (rollback, scale, resource limits)
+#   • create NetworkPolicies               (isolate_container, apply_network_policy)
+#   • cordon/drain Nodes                   (cordon_node, drain_node — read-only
+#                                           patch, actual drain via eviction API)
+#   • create Evictions                     (drain_node pod eviction)
+#   • patch Secrets                        (rotate_secrets annotation trigger)
+# ═══════════════════════════════════════════════════════════════════════════════
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: layer3-guardian
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:      layer3-guardian
+    app.kubernetes.io/component: guardian
+    app.kubernetes.io/part-of:   ccdt-platform
+  annotations:
+    description: "Layer-3 Guardian — remediation executor with elevated K8s RBAC"
+
+---
+# ── ClusterRole: remediation actions ─────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ccdt-layer3-guardian
+  labels:
+    app.kubernetes.io/name:    layer3-guardian
+    app.kubernetes.io/part-of: ccdt-platform
+rules:
+  # Read everything (for topology and state inspection)
+  - apiGroups: [""]
+    resources:  [pods, nodes, services, endpoints, namespaces,
+                 persistentvolumes, persistentvolumeclaims,
+                 replicationcontrollers, serviceaccounts, secrets,
+                 configmaps, events]
+    verbs: [get, list, watch]
+
+  # Pods: delete (restart), eviction (drain), exec (kill_process)
+  - apiGroups: [""]
+    resources:  [pods]
+    verbs:      [delete, patch]
+  - apiGroups: [""]
+    resources:  [pods/eviction]
+    verbs:      [create]
+  - apiGroups: [""]
+    resources:  [pods/exec]
+    verbs:      [create]   # needed for kill_process via exec
+
+  # Deployments: patch (rollback annotation, scale, resource limits)
+  - apiGroups: [apps]
+    resources:  [deployments, statefulsets, replicasets, daemonsets]
+    verbs:      [get, list, watch, patch, update]
+  - apiGroups: [apps]
+    resources:  [deployments/scale, statefulsets/scale]
+    verbs:      [get, patch, update]
+
+  # Nodes: patch (cordon — sets spec.unschedulable)
+  - apiGroups: [""]
+    resources:  [nodes]
+    verbs:      [patch]
+
+  # NetworkPolicies: create / delete (isolate_container, apply_network_policy)
+  - apiGroups: [networking.k8s.io]
+    resources:  [networkpolicies]
+    verbs:      [get, list, watch, create, delete, patch, update]
+
+  # Secrets: patch (rotate_secrets annotation)
+  - apiGroups: [""]
+    resources:  [secrets]
+    verbs:      [get, list, patch, update]
+
+  # Events: write (audit trail of guardian actions)
+  - apiGroups: [""]
+    resources:  [events]
+    verbs:      [create, patch, update]
+
+  # HPA: patch (scale_up/scale_down via HPA minReplicas override)
+  - apiGroups: [autoscaling]
+    resources:  [horizontalpodautoscalers]
+    verbs:      [get, list, watch, patch, update]
+
+  # ResourceQuotas + LimitRanges: read (for OPA input context)
+  - apiGroups: [""]
+    resources:  [resourcequotas, limitranges]
+    verbs:      [get, list, watch]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ccdt-layer3-guardian
+  labels:
+    app.kubernetes.io/name:    layer3-guardian
+    app.kubernetes.io/part-of: ccdt-platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind:     ClusterRole
+  name:     ccdt-layer3-guardian
+subjects:
+  - kind:      ServiceAccount
+    name:      layer3-guardian
+    namespace: ccdt
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: layer3-guardian
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:      layer3-guardian
+    app.kubernetes.io/component: guardian
+    app.kubernetes.io/part-of:   ccdt-platform
+    app.kubernetes.io/version:   "1.0.0"
+  annotations:
+    description: "CCDT Layer-3 Guardian — RL remediation engine + OPA policy gate"
+spec:
+  replicas: 1     # singleton — action serialisation via internal queue
+  selector:
+    matchLabels:
+      app: layer3-guardian
+
+  strategy:
+    type: Recreate    # Recreate (not RollingUpdate) — only one Guardian at a time
+
+  template:
+    metadata:
+      labels:
+        app:                         layer3-guardian
+        app.kubernetes.io/name:      layer3-guardian
+        app.kubernetes.io/component: guardian
+        app.kubernetes.io/part-of:   ccdt-platform
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "9090"
+        prometheus.io/path:   "/metrics"
+
+    spec:
+      serviceAccountName: layer3-guardian
+
+      # Guardian must run on a node that can reach the K8s API server
+      # Prefer control-plane-adjacent nodes
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 50
+              preference:
+                matchExpressions:
+                  - key:      node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist    # NOT on control-plane itself
+
+      initContainers:
+        # Wait for GNN layer to be ready before starting Guardian
+        - name: wait-for-gnn
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until wget -qO- http://layer2-cognitive:8001/ready >/dev/null 2>&1; do
+                echo "Waiting for Layer-2 GNN..."
+                sleep 5
+              done
+              echo "GNN ready — starting Guardian"
+
+      containers:
+        - name: guardian
+          image: ccdt/layer3-guardian:1.0.0
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - python
+            - -m
+            - uvicorn
+            - executor:app
+            - --host=0.0.0.0
+            - --port=8002
+            - --workers=1
+            - --log-level=info
+
+          env:
+            - name: AUTONOMY_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: ccdt-config
+                  key:  autonomy-mode
+                  optional: true
+            - name: GNN_SERVICE_URL
+              value: http://layer2-cognitive:8001
+            - name: OPA_URL
+              value: http://localhost:8181    # OPA sidecar
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                secretKeyRef:
+                  name: ccdt-kafka-credentials
+                  key:  bootstrap-servers
+            - name: AGENT_MODEL_PATH
+              value: /app/checkpoints/guardian_ppo_final
+            - name: K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: INFER_POLL_S
+              value: "5"
+            - name: GHOST_RISK_THRESHOLD
+              value: "0.35"
+            - name: GHOST_CONFIDENCE_MIN
+              value: "0.70"
+            - name: OPA_FALLBACK_LOCAL
+              value: "true"
+            - name: LOG_LEVEL
+              value: info
+
+          ports:
+            - name:          http
+              containerPort: 8002
+              protocol:      TCP
+            - name:          metrics
+              containerPort: 9090
+              protocol:      TCP
+
+          volumeMounts:
+            - name:      rl-model
+              mountPath: /app/checkpoints
+              readOnly:  true
+            - name:      opa-policies
+              mountPath: /app/opa/policies
+              readOnly:  true
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 45
+            periodSeconds:       20
+            failureThreshold:    3
+            timeoutSeconds:      10
+
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8002
+            initialDelaySeconds: 20
+            periodSeconds:       10
+            failureThreshold:    3
+
+          resources:
+            requests:
+              cpu:    "500m"
+              memory: "1Gi"
+            limits:
+              cpu:    "2000m"
+              memory: "4Gi"
+
+          securityContext:
+            runAsNonRoot:             true
+            runAsUser:                1000
+            runAsGroup:               1000
+            readOnlyRootFilesystem:   true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+
+        # ── OPA sidecar ──────────────────────────────────────────────────────
+        # Runs Open Policy Agent as a sidecar for sub-millisecond policy eval.
+        - name: opa
+          image: openpolicyagent/opa:0.65.0-rootless
+          imagePullPolicy: IfNotPresent
+          args:
+            - run
+            - --server
+            - --addr=0.0.0.0:8181
+            - --diagnostic-addr=0.0.0.0:8282
+            - --log-level=info
+            - --log-format=json
+            - --set=decision_logs.console=true
+            - /policies
+
+          ports:
+            - name:          opa-http
+              containerPort: 8181
+              protocol:      TCP
+            - name:          opa-diag
+              containerPort: 8282
+              protocol:      TCP
+
+          volumeMounts:
+            - name:      opa-policies
+              mountPath: /policies
+              readOnly:  true
+
+          livenessProbe:
+            httpGet:
+              path:   /health
+              port:   8282
+            initialDelaySeconds: 10
+            periodSeconds:       15
+            failureThreshold:    3
+
+          readinessProbe:
+            httpGet:
+              path:   /health?plugins
+              port:   8282
+            initialDelaySeconds: 5
+            periodSeconds:       5
+            failureThreshold:    3
+
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "128Mi"
+            limits:
+              cpu:    "500m"
+              memory: "512Mi"
+
+          securityContext:
+            runAsNonRoot:             true
+            runAsUser:                1000
+            readOnlyRootFilesystem:   true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+
+      terminationGracePeriodSeconds: 60
+
+      volumes:
+        - name: rl-model
+          persistentVolumeClaim:
+            claimName: layer3-model-pvc
+            readOnly: true
+        - name: opa-policies
+          configMap:
+            name: layer3-opa-policies
+
+---
+# ── PVC: RL agent checkpoint ──────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: layer3-model-pvc
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:    layer3-guardian
+    app.kubernetes.io/part-of: ccdt-platform
+spec:
+  accessModes: [ReadOnlyMany]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+# ── Service ───────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: layer3-guardian
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:      layer3-guardian
+    app.kubernetes.io/component: guardian
+    app.kubernetes.io/part-of:   ccdt-platform
+spec:
+  selector:
+    app: layer3-guardian
+  ports:
+    - name:       http
+      port:       8002
+      targetPort: http
+      protocol:   TCP
+    - name:       metrics
+      port:       9090
+      targetPort: metrics
+      protocol:   TCP
+  type: ClusterIP
+
+---
+# ── PodDisruptionBudget: never have 0 guardians ───────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: layer3-guardian
+  namespace: ccdt
+spec:
+  minAvailable: 0    # Allow 0 during node drain (singleton)
+  selector:
+    matchLabels:
+      app: layer3-guardian

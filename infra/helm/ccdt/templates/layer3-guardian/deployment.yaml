@@ -1,0 +1,251 @@
+{{- if .Values.layer3.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: layer3-guardian
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer3-guardian" .) | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-layer3-guardian
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer3-guardian" .) | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods, nodes, services, endpoints, namespaces,
+                persistentvolumes, persistentvolumeclaims,
+                serviceaccounts, secrets, configmaps, events, resourcequotas]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs:     [delete, patch]
+  - apiGroups: [""]
+    resources: [pods/eviction]
+    verbs:     [create]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs:     [create]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, replicasets, daemonsets]
+    verbs:     [get, list, watch, patch, update]
+  - apiGroups: [apps]
+    resources: [deployments/scale, statefulsets/scale]
+    verbs:     [get, patch, update]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs:     [patch]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs:     [get, list, watch, create, delete, patch, update]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs:     [get, list, patch, update]
+  - apiGroups: [""]
+    resources: [events]
+    verbs:     [create, patch, update]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs:     [get, list, watch, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-layer3-guardian
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer3-guardian" .) | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind:     ClusterRole
+  name:     {{ .Release.Name }}-layer3-guardian
+subjects:
+  - kind:      ServiceAccount
+    name:      layer3-guardian
+    namespace: {{ include "ccdt.namespace" . }}
+---
+{{- if .Values.layer3.modelPvc.enabled }}
+{{- if not .Values.layer3.modelPvc.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: layer3-guardian-model-pvc
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer3-guardian" .) | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [{{ .Values.layer3.modelPvc.accessMode }}]
+  storageClassName: {{ .Values.layer3.modelPvc.storageClass | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.layer3.modelPvc.size }}
+{{- end }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: layer3-guardian
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer3-guardian" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.layer3.replicas }}
+  selector:
+    matchLabels:
+      {{- include "ccdt.componentSelectorLabels" (list "layer3-guardian" .) | nindent 6 }}
+  strategy:
+    type: {{ .Values.layer3.strategy.type }}
+  template:
+    metadata:
+      labels:
+        {{- include "ccdt.componentLabels" (list "layer3-guardian" .) | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "9090"
+        prometheus.io/path:   "/metrics"
+        checksum/opa-policies: {{ include (print $.Template.BasePath "/layer3-guardian/opa-configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: layer3-guardian
+      securityContext:
+        {{- include "ccdt.podSecurityContext" . | nindent 8 }}
+      initContainers:
+        - name: wait-for-gnn
+          image: busybox:1.36
+          command: ["/bin/sh", "-c", "until wget -qO- http://layer2-cognitive:8001/ready >/dev/null 2>&1; do echo 'Waiting for GNN...'; sleep 5; done"]
+      containers:
+        - name: guardian
+          image: {{ include "ccdt.image" (dict "ctx" . "repo" .Values.layer3.image "global" .Values.global) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - python
+            - -m
+            - uvicorn
+            - executor:app
+            - --host=0.0.0.0
+            - --port=8002
+            - --workers=1
+          env:
+            {{- include "ccdt.commonEnv" . | nindent 12 }}
+            - name:  AUTONOMY_MODE
+              value: {{ .Values.layer3.env.autonomyMode | quote }}
+            - name:  GNN_SERVICE_URL
+              value: http://layer2-cognitive:8001
+            - name:  OPA_URL
+              value: http://localhost:8181
+            - name:  AGENT_MODEL_PATH
+              value: /app/checkpoints/guardian_ppo_final
+            - name:  K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name:  INFER_POLL_S
+              value: {{ .Values.layer3.env.inferPollS | quote }}
+            - name:  GHOST_RISK_THRESHOLD
+              value: {{ .Values.layer3.env.ghostRiskThreshold | quote }}
+            - name:  GHOST_CONFIDENCE_MIN
+              value: {{ .Values.layer3.env.ghostConfidenceMin | quote }}
+            - name:  OPA_FALLBACK_LOCAL
+              value: {{ .Values.layer3.env.opaFallbackLocal | quote }}
+          ports:
+            - { name: http,    containerPort: 8002, protocol: TCP }
+            - { name: metrics, containerPort: 9090, protocol: TCP }
+          volumeMounts:
+            {{- include "ccdt.modelVolumeMount" . | nindent 12 }}
+            - name:     opa-policies
+              mountPath: /app/opa/policies
+              readOnly: true
+          livenessProbe:
+            httpGet: { path: /health, port: 8002 }
+            initialDelaySeconds: 45
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /ready, port: 8002 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.layer3.resources | nindent 12 }}
+          securityContext:
+            {{- include "ccdt.containerSecurityContext" . | nindent 12 }}
+
+        {{- if .Values.layer3.opa.enabled }}
+        - name: opa
+          image: {{ .Values.layer3.opa.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args:
+            - run
+            - --server
+            - --addr=0.0.0.0:8181
+            - --diagnostic-addr=0.0.0.0:8282
+            - --log-level={{ .Values.layer3.opa.logLevel }}
+            - --log-format=json
+            - --set=decision_logs.console=true
+            - /policies
+          ports:
+            - { name: opa-http, containerPort: 8181, protocol: TCP }
+            - { name: opa-diag, containerPort: 8282, protocol: TCP }
+          volumeMounts:
+            - name:     opa-policies
+              mountPath: /policies
+              readOnly: true
+          livenessProbe:
+            httpGet: { path: /health, port: 8282 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /health?plugins, port: 8282 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.layer3.opa.resources | nindent 12 }}
+          securityContext:
+            runAsNonRoot:             true
+            runAsUser:                1000
+            readOnlyRootFilesystem:   true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+        {{- end }}
+
+      terminationGracePeriodSeconds: 60
+      volumes:
+        {{- include "ccdt.modelVolume" (list "layer3-guardian" .Values.layer3.modelPvc) | nindent 8 }}
+        - name: opa-policies
+          configMap:
+            name: layer3-opa-policies
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: layer3-guardian
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer3-guardian" .) | nindent 4 }}
+spec:
+  selector:
+    {{- include "ccdt.componentSelectorLabels" (list "layer3-guardian" .) | nindent 4 }}
+  ports:
+    - { name: http,    port: 8002, targetPort: http,    protocol: TCP }
+    - { name: metrics, port: 9090, targetPort: metrics, protocol: TCP }
+  type: ClusterIP
+{{- if .Values.layer3.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: layer3-guardian
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer3-guardian" .) | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.layer3.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "ccdt.componentSelectorLabels" (list "layer3-guardian" .) | nindent 6 }}
+{{- end }}
+{{- end }}

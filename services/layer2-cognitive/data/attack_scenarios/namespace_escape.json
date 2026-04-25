@@ -1,0 +1,21 @@
+{
+  "scenario_id": "attack_010",
+  "description": "Kubernetes namespace escape via unshare(CLONE_NEWUSER) — inter-namespace lateral movement to monitoring",
+  "graph_label": 2,
+  "nodes": [
+    {"id": "api-gw",      "label": "API Gateway",    "layer": "network", "cpu": 45, "mem": 53, "restarts": 0, "oom_kills": 0, "tcp_retransmit_rate": 5,   "sched_latency_p99_ms": 4,   "cap_event": 0, "file_event": 0, "error_rate": 0.001, "request_rate": 288, "node_label": 0},
+    {"id": "order-svc",   "label": "Order Service",  "layer": "service", "cpu": 68, "mem": 64, "restarts": 0, "oom_kills": 0, "tcp_retransmit_rate": 12,  "sched_latency_p99_ms": 18,  "cap_event": 5, "file_event": 3, "error_rate": 0.003, "request_rate": 268, "node_label": 2},
+    {"id": "monitoring",  "label": "VictoriaMetrics","layer": "system",  "cpu": 54, "mem": 61, "restarts": 0, "oom_kills": 0, "tcp_retransmit_rate": 44,  "sched_latency_p99_ms": 22,  "cap_event": 1, "file_event": 4, "error_rate": 0.0,   "request_rate": 0,   "node_label": 2},
+    {"id": "postgres",    "label": "PostgreSQL",     "layer": "data",    "cpu": 32, "mem": 47, "restarts": 0, "oom_kills": 0, "tcp_retransmit_rate": 0,   "sched_latency_p99_ms": 5,   "cap_event": 0, "file_event": 0, "error_rate": 0.0,   "request_rate": 428, "node_label": 0},
+    {"id": "redis",       "label": "Redis Cache",    "layer": "data",    "cpu": 18, "mem": 43, "restarts": 0, "oom_kills": 0, "tcp_retransmit_rate": 0,   "sched_latency_p99_ms": 1,   "cap_event": 0, "file_event": 0, "error_rate": 0.0,   "request_rate": 795, "node_label": 0},
+    {"id": "kafka",       "label": "Kafka Broker",   "layer": "system",  "cpu": 36, "mem": 50, "restarts": 0, "oom_kills": 0, "tcp_retransmit_rate": 0,   "sched_latency_p99_ms": 0,   "cap_event": 0, "file_event": 0, "error_rate": 0.0,   "request_rate": 0,   "node_label": 0}
+  ],
+  "edges": [
+    {"from": "api-gw",    "to": "order-svc",   "latency_ms": 18,  "error_rate": 0.003, "request_rate": 268, "causal": true},
+    {"from": "order-svc", "to": "postgres",    "latency_ms": 5,   "error_rate": 0.0,   "request_rate": 428, "causal": false},
+    {"from": "order-svc", "to": "redis",       "latency_ms": 0.9, "error_rate": 0.0,   "request_rate": 795, "causal": false},
+    {"from": "order-svc", "to": "monitoring",  "latency_ms": 22,  "error_rate": 0.0,   "request_rate": 280, "causal": true},
+    {"from": "order-svc", "to": "kafka",       "latency_ms": 2.1, "error_rate": 0.0,   "request_rate": 180, "causal": false},
+    {"from": "monitoring","to": "kafka",       "latency_ms": 0.8, "error_rate": 0.0,   "request_rate": 40,  "causal": false}
+  ]
+}

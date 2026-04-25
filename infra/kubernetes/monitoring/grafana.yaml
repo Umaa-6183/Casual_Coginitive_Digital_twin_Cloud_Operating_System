@@ -1,0 +1,739 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT Monitoring — Grafana Deployment + ConfigMap + Service + PVC
+# ═══════════════════════════════════════════════════════════════════════════════
+# Grafana with 4 pre-provisioned dashboards (one per CCDT layer) and
+# Prometheus auto-configured as the default datasource.
+#
+# Access:  kubectl port-forward svc/grafana 3000:3000 -n monitoring
+#          http://localhost:3000  (admin / ${GF_SECURITY_ADMIN_PASSWORD})
+# ═══════════════════════════════════════════════════════════════════════════════
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    grafana
+    app.kubernetes.io/part-of: ccdt-platform
+
+---
+# ── Main Grafana configuration ────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-config
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    grafana
+    app.kubernetes.io/part-of: ccdt-platform
+data:
+  grafana.ini: |
+    [server]
+    http_port = 3000
+    root_url  = %(protocol)s://%(domain)s:%(http_port)s/
+
+    [database]
+    type = sqlite3
+    path = /var/lib/grafana/grafana.db
+
+    [session]
+    provider = file
+
+    [security]
+    admin_user                = admin
+    disable_initial_admin_creation = false
+    cookie_secure             = false
+    allow_embedding           = true
+
+    [auth.anonymous]
+    enabled  = false
+    org_role = Viewer
+
+    [users]
+    allow_sign_up  = false
+    default_theme  = dark
+
+    [log]
+    mode  = console
+    level = info
+
+    [alerting]
+    enabled         = false     # use Alertmanager for alerts
+    execute_alerts  = false
+
+    [unified_alerting]
+    enabled = false
+
+    [snapshots]
+    external_enabled = false
+
+    [analytics]
+    reporting_enabled = false
+    check_for_updates = false
+
+---
+# ── Prometheus datasource auto-provisioning ───────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    grafana
+    app.kubernetes.io/part-of: ccdt-platform
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name:      Prometheus
+        type:      prometheus
+        url:       http://prometheus.monitoring.svc.cluster.local:9090
+        access:    proxy
+        isDefault: true
+        uid:       prometheus-ccdt
+        jsonData:
+          timeInterval:      "15s"
+          queryTimeout:      "60s"
+          httpMethod:        POST
+          manageAlerts:      false
+          prometheusType:    Prometheus
+          prometheusVersion: "2.53.0"
+          exemplarTraceIdDestinations:
+            - name:         traceID
+              datasourceUid: tempo
+        editable: true
+
+---
+# ── Dashboard auto-provisioning source ───────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-providers
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    grafana
+    app.kubernetes.io/part-of: ccdt-platform
+data:
+  providers.yaml: |
+    apiVersion: 1
+    providers:
+      - name:            CCDT Dashboards
+        orgId:           1
+        folder:          CCDT
+        folderUid:       ccdt-folder
+        type:            file
+        disableDeletion: true
+        updateIntervalSeconds: 30
+        allowUiUpdates:  true
+        options:
+          path: /var/lib/grafana/dashboards
+
+---
+# ── CCDT Dashboard definitions ────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    grafana
+    app.kubernetes.io/part-of: ccdt-platform
+data:
+  # ── Overview dashboard ─────────────────────────────────────────────────────
+  ccdt-overview.json: |
+    {
+      "uid":          "ccdt-overview",
+      "title":        "CCDT — Platform Overview",
+      "tags":         ["ccdt", "overview"],
+      "timezone":     "browser",
+      "refresh":      "15s",
+      "time":         {"from": "now-1h", "to": "now"},
+      "schemaVersion": 38,
+      "panels": [
+        {
+          "id": 1, "type": "stat", "title": "Cluster Health",
+          "gridPos": {"x":0,"y":0,"w":4,"h":4},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"colorMode":"background","graphMode":"none","textMode":"value"},
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {"mode":"absolute","steps":[
+                {"color":"green","value":null},
+                {"color":"orange","value":1},
+                {"color":"red","value":2}
+              ]},
+              "mappings": [
+                {"type":"value","options":{"0":{"text":"HEALTHY","color":"green"},"1":{"text":"FAULT","color":"orange"},"2":{"text":"ATTACK","color":"red"}}}
+              ]
+            }
+          },
+          "targets": [{"expr":"max(ccdt_gnn_incident_type_gauge) or vector(0)","legendFormat":"Status"}]
+        },
+        {
+          "id": 2, "type": "stat", "title": "GNN Root-Cause Confidence",
+          "gridPos": {"x":4,"y":0,"w":4,"h":4},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"colorMode":"value","graphMode":"area","textMode":"value","reduceOptions":{"calcs":["lastNotNull"]}},
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "thresholds": {"mode":"absolute","steps":[
+                {"color":"red","value":null},
+                {"color":"orange","value":0.65},
+                {"color":"green","value":0.85}
+              ]}
+            }
+          },
+          "targets": [{"expr":"ccdt_gnn_root_cause_confidence","legendFormat":"Confidence"}]
+        },
+        {
+          "id": 3, "type": "stat", "title": "Guardian Actions (5m)",
+          "gridPos": {"x":8,"y":0,"w":4,"h":4},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"colorMode":"background","graphMode":"area","textMode":"value"},
+          "fieldConfig": {"defaults":{"unit":"short","color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"orange","value":5},{"color":"red","value":20}]}}},
+          "targets": [{"expr":"round(ccdt:guardian_actions:rate5m)","legendFormat":"Actions/min"}]
+        },
+        {
+          "id": 4, "type": "stat", "title": "OPA Denial Rate",
+          "gridPos": {"x":12,"y":0,"w":4,"h":4},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"colorMode":"background","graphMode":"none","textMode":"value"},
+          "fieldConfig": {
+            "defaults": {"unit":"percentunit","thresholds":{"mode":"absolute","steps":[
+              {"color":"green","value":null},
+              {"color":"orange","value":0.10},
+              {"color":"red","value":0.30}
+            ]}}
+          },
+          "targets": [{"expr":"ccdt:opa_denial_rate:5m","legendFormat":"OPA Denials"}]
+        },
+        {
+          "id": 5, "type": "stat", "title": "Co-Pilot Tokens/min",
+          "gridPos": {"x":16,"y":0,"w":4,"h":4},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"colorMode":"value","graphMode":"area","textMode":"value"},
+          "fieldConfig": {"defaults":{"unit":"short","color":{"fixedColor":"blue","mode":"fixed"}}},
+          "targets": [{"expr":"round(ccdt:copilot_tokens_in:rate1m + ccdt:copilot_tokens_out:rate1m)","legendFormat":"Tokens/min"}]
+        },
+        {
+          "id": 6, "type": "stat", "title": "Active Incidents",
+          "gridPos": {"x":20,"y":0,"w":4,"h":4},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"colorMode":"background","graphMode":"none","textMode":"value"},
+          "fieldConfig": {"defaults":{"unit":"short","thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"orange","value":1},{"color":"red","value":3}]}}},
+          "targets": [{"expr":"ccdt_active_incidents_total or vector(0)","legendFormat":"Incidents"}]
+        },
+        {
+          "id": 10, "type": "timeseries", "title": "GNN Inference Rate",
+          "gridPos": {"x":0,"y":4,"w":12,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"tooltip":{"mode":"multi"},"legend":{"displayMode":"list","placement":"bottom"}},
+          "fieldConfig": {"defaults":{"unit":"reqps","custom":{"lineWidth":2,"fillOpacity":10}}},
+          "targets": [{"expr":"ccdt:gnn_inferences:rate1m / 60","legendFormat":"Inferences/s"}]
+        },
+        {
+          "id": 11, "type": "timeseries", "title": "Guardian Action Pipeline",
+          "gridPos": {"x":12,"y":4,"w":12,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"tooltip":{"mode":"multi"},"legend":{"displayMode":"list","placement":"bottom"}},
+          "fieldConfig": {"defaults":{"unit":"short","custom":{"lineWidth":2,"fillOpacity":8}}},
+          "targets": [
+            {"expr":"rate(ccdt_guardian_actions_total{status=\"executed\"}[5m])*60","legendFormat":"Executed"},
+            {"expr":"rate(ccdt_guardian_actions_total{status=~\"blocked.*\"}[5m])*60","legendFormat":"Blocked (OPA/Ghost)"},
+            {"expr":"rate(ccdt_guardian_actions_total{status=\"pending_human_approval\"}[5m])*60","legendFormat":"Pending Human"},
+            {"expr":"rate(ccdt_guardian_actions_total{status=\"execution_failed\"}[5m])*60","legendFormat":"Failed"}
+          ]
+        }
+      ]
+    }
+
+  # ── Layer-2 GNN dashboard ───────────────────────────────────────────────────
+  ccdt-layer2-gnn.json: |
+    {
+      "uid":   "ccdt-layer2-gnn",
+      "title": "CCDT — Layer-2 Cognitive Core (GNN)",
+      "tags":  ["ccdt", "gnn", "layer2"],
+      "timezone": "browser",
+      "refresh": "15s",
+      "time":  {"from":"now-1h","to":"now"},
+      "schemaVersion": 38,
+      "panels": [
+        {
+          "id": 1, "type": "timeseries", "title": "GNN Inference Latency (P50 / P95 / P99)",
+          "gridPos": {"x":0,"y":0,"w":12,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "fieldConfig": {"defaults":{"unit":"s","custom":{"lineWidth":2}}},
+          "targets": [
+            {"expr":"histogram_quantile(0.50, rate(ccdt_gnn_inference_duration_seconds_bucket[5m]))","legendFormat":"P50"},
+            {"expr":"histogram_quantile(0.95, rate(ccdt_gnn_inference_duration_seconds_bucket[5m]))","legendFormat":"P95"},
+            {"expr":"ccdt:gnn_latency_p99:5m","legendFormat":"P99"}
+          ]
+        },
+        {
+          "id": 2, "type": "timeseries", "title": "Node Classification Distribution",
+          "gridPos": {"x":12,"y":0,"w":12,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "fieldConfig": {"defaults":{"unit":"short","custom":{"lineWidth":2,"fillOpacity":10},"min":0}},
+          "targets": [
+            {"expr":"sum(ccdt_gnn_node_classifications_total{class=\"healthy\"}) by (class)","legendFormat":"Healthy"},
+            {"expr":"sum(ccdt_gnn_node_classifications_total{class=\"fault\"})   by (class)","legendFormat":"Fault"},
+            {"expr":"sum(ccdt_gnn_node_classifications_total{class=\"attack\"})  by (class)","legendFormat":"Attack"}
+          ]
+        },
+        {
+          "id": 3, "type": "timeseries", "title": "Root Cause Confidence Over Time",
+          "gridPos": {"x":0,"y":8,"w":12,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "fieldConfig": {"defaults":{"unit":"percentunit","custom":{"lineWidth":2},"min":0,"max":1}},
+          "targets": [{"expr":"ccdt_gnn_root_cause_confidence","legendFormat":"Root Cause Confidence"}]
+        },
+        {
+          "id": 4, "type": "timeseries", "title": "Blast Radius Node Count",
+          "gridPos": {"x":12,"y":8,"w":12,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "fieldConfig": {"defaults":{"unit":"short","custom":{"lineWidth":2,"fillOpacity":8},"min":0}},
+          "targets": [{"expr":"ccdt_gnn_blast_radius_nodes","legendFormat":"Blast Radius (nodes)"}]
+        },
+        {
+          "id": 5, "type": "timeseries", "title": "Kafka Consumer Lag (GNN Input)",
+          "gridPos": {"x":0,"y":16,"w":24,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "fieldConfig": {"defaults":{"unit":"short","custom":{"lineWidth":2}}},
+          "targets": [
+            {"expr":"kafka_consumer_group_lag{group=\"ccdt-gnn-dag-builder\"}","legendFormat":"Partition {{partition}}"}
+          ]
+        }
+      ]
+    }
+
+  # ── Layer-3 Guardian dashboard ─────────────────────────────────────────────
+  ccdt-layer3-guardian.json: |
+    {
+      "uid":   "ccdt-layer3-guardian",
+      "title": "CCDT — Layer-3 Guardian (RL + OPA)",
+      "tags":  ["ccdt", "guardian", "layer3", "opa"],
+      "timezone": "browser",
+      "refresh": "15s",
+      "time":  {"from":"now-3h","to":"now"},
+      "schemaVersion": 38,
+      "panels": [
+        {
+          "id": 1, "type": "piechart", "title": "Actions by Status (24h)",
+          "gridPos": {"x":0,"y":0,"w":8,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"pieType":"pie","displayLabels":["name","percent"]},
+          "targets": [
+            {"expr":"increase(ccdt_guardian_actions_total[24h])","legendFormat":"{{status}}"}
+          ]
+        },
+        {
+          "id": 2, "type": "piechart", "title": "Actions by Name (24h)",
+          "gridPos": {"x":8,"y":0,"w":8,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"pieType":"donut","displayLabels":["name","percent"]},
+          "targets": [
+            {"expr":"increase(ccdt_guardian_actions_total[24h])","legendFormat":"{{name}}"}
+          ]
+        },
+        {
+          "id": 3, "type": "timeseries", "title": "OPA Decision Rate",
+          "gridPos": {"x":16,"y":0,"w":8,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "fieldConfig": {"defaults":{"unit":"reqps","custom":{"lineWidth":2}}},
+          "targets": [
+            {"expr":"rate(ccdt_guardian_actions_total[5m])","legendFormat":"Total"},
+            {"expr":"rate(ccdt_guardian_opa_denials_total[5m])","legendFormat":"OPA Denied"}
+          ]
+        },
+        {
+          "id": 4, "type": "timeseries", "title": "Ghost Preview Latency",
+          "gridPos": {"x":0,"y":8,"w":12,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "fieldConfig": {"defaults":{"unit":"s","custom":{"lineWidth":2}}},
+          "targets": [
+            {"expr":"histogram_quantile(0.50, rate(ccdt_guardian_ghost_preview_seconds_bucket[5m]))","legendFormat":"P50"},
+            {"expr":"histogram_quantile(0.95, rate(ccdt_guardian_ghost_preview_seconds_bucket[5m]))","legendFormat":"P95"},
+            {"expr":"histogram_quantile(0.99, rate(ccdt_guardian_ghost_preview_seconds_bucket[5m]))","legendFormat":"P99"}
+          ]
+        },
+        {
+          "id": 5, "type": "timeseries", "title": "K8s Action Execution Duration",
+          "gridPos": {"x":12,"y":8,"w":12,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "fieldConfig": {"defaults":{"unit":"s","custom":{"lineWidth":2}}},
+          "targets": [
+            {"expr":"histogram_quantile(0.50, rate(ccdt_guardian_exec_duration_seconds_bucket[5m]))","legendFormat":"P50"},
+            {"expr":"histogram_quantile(0.95, rate(ccdt_guardian_exec_duration_seconds_bucket[5m]))","legendFormat":"P95"},
+            {"expr":"ccdt:guardian_exec_p99:5m","legendFormat":"P99"}
+          ]
+        },
+        {
+          "id": 6, "type": "table", "title": "OPA Policy Violations by Policy",
+          "gridPos": {"x":0,"y":16,"w":24,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"sortBy":[{"displayName":"Violations","desc":true}]},
+          "targets": [
+            {"expr":"sum by (policy) (increase(ccdt_guardian_opa_denials_total[24h]))","legendFormat":"{{policy}}","instant":true}
+          ],
+          "transformations": [
+            {"id":"merge","options":{}},
+            {"id":"organize","options":{"renameByName":{"Value":"Violations","policy":"Policy"}}}
+          ]
+        }
+      ]
+    }
+
+  # ── eBPF Layer-1 dashboard ─────────────────────────────────────────────────
+  ccdt-layer1-ebpf.json: |
+    {
+      "uid":   "ccdt-layer1-ebpf",
+      "title": "CCDT — Layer-1 eBPF Nervous System",
+      "tags":  ["ccdt", "ebpf", "layer1", "security"],
+      "timezone": "browser",
+      "refresh": "10s",
+      "time":  {"from":"now-30m","to":"now"},
+      "schemaVersion": 38,
+      "panels": [
+        {
+          "id": 1, "type": "timeseries", "title": "eBPF Events/s by Type",
+          "gridPos": {"x":0,"y":0,"w":16,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "fieldConfig": {"defaults":{"unit":"reqps","custom":{"lineWidth":2,"fillOpacity":5}}},
+          "targets": [
+            {"expr":"rate(ccdt_ebpf_events_total{type=\"capability\"}[1m])","legendFormat":"Capability"},
+            {"expr":"rate(ccdt_ebpf_events_total{type=\"oom\"}[1m])","legendFormat":"OOM Kill"},
+            {"expr":"rate(ccdt_ebpf_events_total{type=\"tcp\"}[1m])","legendFormat":"TCP Retransmit"},
+            {"expr":"rate(ccdt_ebpf_events_total{type=\"sched\"}[1m])","legendFormat":"Sched Latency"},
+            {"expr":"rate(ccdt_ebpf_events_total{type=\"file\"}[1m])","legendFormat":"File Access"},
+            {"expr":"rate(ccdt_ebpf_events_total{type=\"syscall\"}[1m])","legendFormat":"Syscall"}
+          ]
+        },
+        {
+          "id": 2, "type": "stat", "title": "Capability Events (15m)",
+          "gridPos": {"x":16,"y":0,"w":4,"h":4},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"colorMode":"background","textMode":"value"},
+          "fieldConfig": {"defaults":{"unit":"short","thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"orange","value":5},{"color":"red","value":20}]}}},
+          "targets": [{"expr":"increase(ccdt_ebpf_events_total{type=\"capability\"}[15m])","legendFormat":"Cap Events"}]
+        },
+        {
+          "id": 3, "type": "stat", "title": "OOM Kills (15m)",
+          "gridPos": {"x":20,"y":0,"w":4,"h":4},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"colorMode":"background","textMode":"value"},
+          "fieldConfig": {"defaults":{"unit":"short","thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"orange","value":1},{"color":"red","value":5}]}}},
+          "targets": [{"expr":"increase(ccdt_ebpf_events_total{type=\"oom\"}[15m])","legendFormat":"OOM Kills"}]
+        },
+        {
+          "id": 4, "type": "stat", "title": "Sensitive File Access (15m)",
+          "gridPos": {"x":16,"y":4,"w":4,"h":4},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"colorMode":"background","textMode":"value"},
+          "fieldConfig": {"defaults":{"unit":"short","thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"red","value":1}]}}},
+          "targets": [{"expr":"increase(ccdt_ebpf_events_total{type=\"file\"}[15m])","legendFormat":"File Events"}]
+        },
+        {
+          "id": 5, "type": "stat", "title": "Kafka Produce Rate",
+          "gridPos": {"x":20,"y":4,"w":4,"h":4},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"colorMode":"value","textMode":"value","graphMode":"area"},
+          "fieldConfig": {"defaults":{"unit":"reqps","color":{"fixedColor":"blue","mode":"fixed"}}},
+          "targets": [{"expr":"rate(ccdt_ebpf_kafka_produced_total[1m])","legendFormat":"Events/s"}]
+        },
+        {
+          "id": 6, "type": "timeseries", "title": "Scheduler Latency P99 by Node",
+          "gridPos": {"x":0,"y":8,"w":24,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "fieldConfig": {"defaults":{"unit":"µs","custom":{"lineWidth":2}}},
+          "targets": [
+            {"expr":"histogram_quantile(0.99, rate(ccdt_ebpf_sched_latency_us_bucket[1m])) by (node)","legendFormat":"{{node}}"}
+          ]
+        }
+      ]
+    }
+
+  # ── Co-Pilot Layer-4 dashboard ─────────────────────────────────────────────
+  ccdt-layer4-copilot.json: |
+    {
+      "uid":   "ccdt-layer4-copilot",
+      "title": "CCDT — Layer-4 Co-Pilot (Claude AI)",
+      "tags":  ["ccdt", "copilot", "layer4", "llm"],
+      "timezone": "browser",
+      "refresh": "30s",
+      "time":  {"from":"now-3h","to":"now"},
+      "schemaVersion": 38,
+      "panels": [
+        {
+          "id": 1, "type": "stat", "title": "Active Sessions",
+          "gridPos": {"x":0,"y":0,"w":4,"h":4},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"colorMode":"value","textMode":"value"},
+          "fieldConfig": {"defaults":{"unit":"short","color":{"fixedColor":"blue","mode":"fixed"}}},
+          "targets": [{"expr":"ccdt_copilot_active_sessions or vector(0)","legendFormat":"Sessions"}]
+        },
+        {
+          "id": 2, "type": "stat", "title": "Tokens In/min",
+          "gridPos": {"x":4,"y":0,"w":4,"h":4},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"colorMode":"value","textMode":"value"},
+          "fieldConfig": {"defaults":{"unit":"short","color":{"fixedColor":"purple","mode":"fixed"}}},
+          "targets": [{"expr":"round(ccdt:copilot_tokens_in:rate1m)","legendFormat":"Tokens In/min"}]
+        },
+        {
+          "id": 3, "type": "stat", "title": "Tokens Out/min",
+          "gridPos": {"x":8,"y":0,"w":4,"h":4},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"colorMode":"value","textMode":"value"},
+          "fieldConfig": {"defaults":{"unit":"short","color":{"fixedColor":"green","mode":"fixed"}}},
+          "targets": [{"expr":"round(ccdt:copilot_tokens_out:rate1m)","legendFormat":"Tokens Out/min"}]
+        },
+        {
+          "id": 4, "type": "stat", "title": "Chat Errors (1h)",
+          "gridPos": {"x":12,"y":0,"w":4,"h":4},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "options": {"colorMode":"background","textMode":"value"},
+          "fieldConfig": {"defaults":{"unit":"short","thresholds":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"orange","value":1},{"color":"red","value":10}]}}},
+          "targets": [{"expr":"increase(ccdt_copilot_errors_total[1h])","legendFormat":"Errors"}]
+        },
+        {
+          "id": 5, "type": "timeseries", "title": "Chat Latency (P50 / P95 / P99)",
+          "gridPos": {"x":0,"y":4,"w":12,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "fieldConfig": {"defaults":{"unit":"s","custom":{"lineWidth":2}}},
+          "targets": [
+            {"expr":"histogram_quantile(0.50, rate(ccdt_copilot_latency_seconds_bucket[5m]))","legendFormat":"P50"},
+            {"expr":"histogram_quantile(0.95, rate(ccdt_copilot_latency_seconds_bucket[5m]))","legendFormat":"P95"},
+            {"expr":"histogram_quantile(0.99, rate(ccdt_copilot_latency_seconds_bucket[5m]))","legendFormat":"P99"}
+          ]
+        },
+        {
+          "id": 6, "type": "timeseries", "title": "Token Consumption Over Time",
+          "gridPos": {"x":12,"y":4,"w":12,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "fieldConfig": {"defaults":{"unit":"short","custom":{"lineWidth":2,"fillOpacity":8}}},
+          "targets": [
+            {"expr":"ccdt:copilot_tokens_in:rate1m","legendFormat":"Input Tokens/min"},
+            {"expr":"ccdt:copilot_tokens_out:rate1m","legendFormat":"Output Tokens/min"}
+          ]
+        },
+        {
+          "id": 7, "type": "timeseries", "title": "Chat Requests by Type",
+          "gridPos": {"x":0,"y":12,"w":24,"h":8},
+          "datasource": {"uid":"prometheus-ccdt","type":"prometheus"},
+          "fieldConfig": {"defaults":{"unit":"reqps","custom":{"lineWidth":2,"fillOpacity":5}}},
+          "targets": [
+            {"expr":"rate(ccdt_copilot_chats_total{type=\"non_stream\"}[5m])","legendFormat":"Non-streaming"},
+            {"expr":"rate(ccdt_copilot_chats_total{type=\"stream\"}[5m])","legendFormat":"Streaming SSE"},
+            {"expr":"rate(ccdt_copilot_errors_total[5m])","legendFormat":"Errors"}
+          ]
+        }
+      ]
+    }
+
+---
+# ── Grafana PVC ───────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    grafana
+    app.kubernetes.io/part-of: ccdt-platform
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# ── Grafana admin password secret ─────────────────────────────────────────────
+# Change this before deploying to production!
+# Generate: kubectl create secret generic grafana-admin \
+#   --from-literal=admin-password='<your-strong-password>' -n monitoring
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-admin
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    grafana
+    app.kubernetes.io/part-of: ccdt-platform
+  annotations:
+    description: "Change admin-password before production deploy"
+type: Opaque
+stringData:
+  admin-password: "ccdt-admin-changeme"   # ← CHANGE THIS
+
+---
+# ── Grafana Deployment ────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    grafana
+    app.kubernetes.io/part-of: ccdt-platform
+  annotations:
+    description: "CCDT Grafana — pre-provisioned dashboards for all 4 layers"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  strategy:
+    type: Recreate
+
+  template:
+    metadata:
+      labels:
+        app:                       grafana
+        app.kubernetes.io/name:    grafana
+        app.kubernetes.io/part-of: ccdt-platform
+
+    spec:
+      serviceAccountName: grafana
+
+      securityContext:
+        fsGroup:    472      # grafana GID
+        runAsUser:  472
+        runAsGroup: 472
+
+      # Init: set correct permissions on data volume
+      initContainers:
+        - name: init-chown
+          image: busybox:1.36
+          command: ["chown", "-R", "472:472", "/var/lib/grafana"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name:      grafana-data
+              mountPath: /var/lib/grafana
+
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.1.0
+          imagePullPolicy: IfNotPresent
+
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key:  admin-password
+            - name: GF_PATHS_DATA
+              value: /var/lib/grafana
+            - name: GF_PATHS_LOGS
+              value: /var/log/grafana
+            - name: GF_PATHS_PLUGINS
+              value: /var/lib/grafana/plugins
+            - name: GF_PATHS_PROVISIONING
+              value: /etc/grafana/provisioning
+            - name: GF_SERVER_HTTP_PORT
+              value: "3000"
+            # Install useful Grafana plugins on startup
+            - name: GF_INSTALL_PLUGINS
+              value: >
+                grafana-piechart-panel,
+                grafana-clock-panel,
+                grafana-worldmap-panel
+
+          ports:
+            - name:          http
+              containerPort: 3000
+              protocol:      TCP
+
+          volumeMounts:
+            - name:      grafana-config
+              mountPath: /etc/grafana/grafana.ini
+              subPath:   grafana.ini
+            - name:      grafana-datasources
+              mountPath: /etc/grafana/provisioning/datasources/datasources.yaml
+              subPath:   datasources.yaml
+            - name:      grafana-providers
+              mountPath: /etc/grafana/provisioning/dashboards/providers.yaml
+              subPath:   providers.yaml
+            - name:      grafana-dashboards
+              mountPath: /var/lib/grafana/dashboards
+            - name:      grafana-data
+              mountPath: /var/lib/grafana
+            - name:      grafana-logs
+              mountPath: /var/log/grafana
+
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds:       15
+            failureThreshold:    5
+            timeoutSeconds:      10
+
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds:       10
+            failureThreshold:    3
+
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "256Mi"
+            limits:
+              cpu:    "500m"
+              memory: "1Gi"
+
+          securityContext:
+            runAsNonRoot:             true
+            runAsUser:                472
+            readOnlyRootFilesystem:   false
+            allowPrivilegeEscalation: false
+
+      terminationGracePeriodSeconds: 30
+
+      volumes:
+        - name: grafana-config
+          configMap:
+            name: grafana-config
+        - name: grafana-datasources
+          configMap:
+            name: grafana-datasources
+        - name: grafana-providers
+          configMap:
+            name: grafana-dashboard-providers
+        - name: grafana-dashboards
+          configMap:
+            name: grafana-dashboards
+        - name: grafana-data
+          persistentVolumeClaim:
+            claimName: grafana-data
+        - name: grafana-logs
+          emptyDir: {}
+
+---
+# ── Service ───────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    grafana
+    app.kubernetes.io/part-of: ccdt-platform
+spec:
+  selector:
+    app: grafana
+  ports:
+    - name:       http
+      port:       3000
+      targetPort: http
+      protocol:   TCP
+  type: ClusterIP

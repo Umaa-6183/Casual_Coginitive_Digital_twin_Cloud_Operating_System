@@ -1,0 +1,104 @@
+{
+  "scenario_id": "fault_cpu_saturation",
+  "description": "CPU saturation + scheduler latency degradation on payment-svc",
+  "nodes": [
+    {
+      "id": "payment-svc",
+      "label": "Payment Service",
+      "status": "critical",
+      "layer": "service",
+      "cpu": 98,
+      "mem": 72,
+      "restarts": 1,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 2,
+      "sched_latency_p99_ms": 380,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 3,
+      "node_label": 1
+    },
+    {
+      "id": "api-gw",
+      "label": "API Gateway",
+      "status": "warning",
+      "layer": "network",
+      "cpu": 52,
+      "mem": 60,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 6,
+      "sched_latency_p99_ms": 14,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 2,
+      "node_label": 0
+    },
+    {
+      "id": "postgres",
+      "label": "PostgreSQL",
+      "status": "healthy",
+      "layer": "data",
+      "cpu": 38,
+      "mem": 62,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 0,
+      "sched_latency_p99_ms": 5,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 2,
+      "node_label": 0
+    },
+    {
+      "id": "inventory-svc",
+      "label": "Inventory Service",
+      "status": "healthy",
+      "layer": "service",
+      "cpu": 28,
+      "mem": 40,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 0,
+      "sched_latency_p99_ms": 7,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 2,
+      "node_label": 0
+    }
+  ],
+  "edges": [
+    {
+      "from": "api-gw",
+      "to": "payment-svc",
+      "latency_ms": 320,
+      "error_rate": 0.07,
+      "request_rate": 95,
+      "causal": true
+    },
+    {
+      "from": "api-gw",
+      "to": "inventory-svc",
+      "latency_ms": 8,
+      "error_rate": 0.0,
+      "request_rate": 140,
+      "causal": false
+    },
+    {
+      "from": "payment-svc",
+      "to": "postgres",
+      "latency_ms": 18,
+      "error_rate": 0.01,
+      "request_rate": 88,
+      "causal": false
+    },
+    {
+      "from": "inventory-svc",
+      "to": "postgres",
+      "latency_ms": 6,
+      "error_rate": 0.0,
+      "request_rate": 55,
+      "causal": false
+    }
+  ]
+}

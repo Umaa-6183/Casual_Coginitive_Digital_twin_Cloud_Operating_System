@@ -1,0 +1,118 @@
+[build-system]
+requires      = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name        = "ccdt-shared"
+version     = "1.0.0"
+description = "CCDT Shared — Protocol Buffers, JSON Schemas, Logging, and Metrics"
+readme      = "README.md"
+requires-python = ">=3.11"
+license     = { text = "Apache-2.0" }
+authors     = [{ name = "CCDT Platform Engineering", email = "platform@yourcompany.com" }]
+
+keywords = ["aiops", "protobuf", "grpc", "metrics", "logging", "kubernetes"]
+
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Monitoring",
+    "Topic :: System :: Distributed Computing",
+]
+
+# ── Core runtime dependencies ─────────────────────────────────────────────────
+dependencies = [
+    # Prometheus metrics
+    "prometheus-client>=0.20.0,<1.0",
+
+    # JSON schema validation (optional but strongly recommended)
+    "jsonschema>=4.22,<5.0",
+
+    # Structured logging (optional — stdlib fallback if not installed)
+    # "structlog>=24.1,<25.0",   # uncomment if structlog is desired
+]
+
+# ── Optional extras ────────────────────────────────────────────────────────────
+[project.optional-dependencies]
+
+# Full protobuf support (run `make proto` after installing)
+proto = [
+    "protobuf>=4.25,<6.0",
+    "grpcio>=1.62,<2.0",
+    "grpcio-tools>=1.62,<2.0",
+]
+
+# Structured logging
+structlog = [
+    "structlog>=24.1,<25.0",
+    "rich>=13.7,<14.0",
+]
+
+# Development / testing
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "mypy>=1.10",
+    "ruff>=0.5",
+    "black>=24.4",
+]
+
+# All extras
+all = [
+    "ccdt-shared[proto]",
+    "ccdt-shared[structlog]",
+    "ccdt-shared[dev]",
+]
+
+[project.urls]
+Homepage   = "https://github.com/your-org/ccdt"
+Repository = "https://github.com/your-org/ccdt"
+
+# ── Package discovery ─────────────────────────────────────────────────────────
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ccdt*"]
+
+[tool.setuptools.package-data]
+"ccdt.shared.schemas" = ["*.json"]
+"ccdt.shared.proto"   = ["*.proto"]
+
+# ── Tool configuration ────────────────────────────────────────────────────────
+
+[tool.ruff]
+line-length    = 100
+target-version = "py311"
+src            = ["."]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "N", "S", "B", "A", "C4", "T20"]
+ignore = [
+    "S101",   # assert OK in tests
+    "S603",   # subprocess without shell=True is OK
+    "N803",   # Uppercase argument names (proto uses them)
+    "N806",   # Uppercase variables (proto uses them)
+    "A002",   # Shadowing builtin 'format' in Formatter.format
+    "B008",   # Do not perform function calls in default args (dataclasses need this)
+]
+
+[tool.mypy]
+python_version         = "3.11"
+strict                 = true
+ignore_missing_imports = true
+exclude                = ["generated/"]   # skip generated files
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths    = ["tests"]
+addopts      = "--cov=ccdt --cov-report=term-missing --cov-report=xml"
+
+[tool.coverage.run]
+source   = ["ccdt"]
+omit     = ["*/generated/*", "*/tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+fail_under = 80

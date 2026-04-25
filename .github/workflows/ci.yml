@@ -1,0 +1,829 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# CCDT — Continuous Integration Pipeline
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Job graph (simplified):
+#
+#   changes ──┬── secret-scan
+#             ├── proto-validate
+#             ├── python-shared ──┬── layer2-gnn ──┐
+#             ├── layer1-go       ├── layer3-grd   ├── integration
+#             ├── dashboard       ├── layer4-cop   ├── e2e-smoke
+#             └── helm-lint       └── api-gateway  └── docker-build
+#                                                        │
+#                                                   ci-gate ← all jobs
+#
+# Required secrets (none for CI; CD secrets are in cd.yml):
+#   CODECOV_TOKEN  — optional, for coverage uploads
+#   GITLEAKS_LICENSE — optional, OSS mode works without
+#
+# ══════════════════════════════════════════════════════════════════════════════
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - ".github/CODEOWNERS"
+  push:
+    branches: [main, develop]
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+  workflow_dispatch:
+    inputs:
+      run_chaos:
+        description: "Also run chaos tests?"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  GO_VERSION: "1.22"
+  NODE_VERSION: "20"
+  CUDA_VISIBLE_DEVICES: ""
+  TOKENIZERS_PARALLELISM: "false"
+
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  # ── Detect changed paths to skip unrelated jobs ──────────────────────────
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      layer1: ${{ steps.filter.outputs.layer1 }}
+      layer2: ${{ steps.filter.outputs.layer2 }}
+      layer3: ${{ steps.filter.outputs.layer3 }}
+      layer4: ${{ steps.filter.outputs.layer4 }}
+      gateway: ${{ steps.filter.outputs.gateway }}
+      dashboard: ${{ steps.filter.outputs.dashboard }}
+      shared: ${{ steps.filter.outputs.shared }}
+      infra: ${{ steps.filter.outputs.infra }}
+      tests: ${{ steps.filter.outputs.tests }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            layer1:
+              - 'services/layer1-nervous/**'
+            layer2:
+              - 'services/layer2-cognitive/**'
+              - 'shared/**'
+            layer3:
+              - 'services/layer3-guardian/**'
+              - 'shared/**'
+            layer4:
+              - 'services/layer4-copilot/**'
+              - 'shared/**'
+            gateway:
+              - 'apps/api-gateway/**'
+              - 'shared/**'
+            dashboard:
+              - 'apps/dashboard/**'
+            shared:
+              - 'shared/**'
+            infra:
+              - 'infra/**'
+            tests:
+              - 'tests/**'
+              - 'shared/**'
+
+  # ── Secret / credential leak scan ────────────────────────────────────────
+  secret-scan:
+    name: Secret Scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Proto schema validation (cross-layer contract) ────────────────────────
+  proto-validate:
+    name: Proto Schema Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install proto tools
+        run: pip install grpcio-tools==1.64.0 protobuf==4.25.3
+
+      - name: Compile all .proto files
+        run: |
+          mkdir -p /tmp/proto-check
+          for proto in shared/proto/*.proto; do
+            echo -n "  Compiling $proto ... "
+            python3 -m grpc_tools.protoc \
+              -I shared/proto \
+              --python_out=/tmp/proto-check \
+              "$proto" && echo "OK"
+          done
+
+      - name: Validate Python shim imports
+        run: |
+          PYTHONPATH=. python3 -c "
+          from shared.proto.generated.events_pb2  import TypedEbpfBatch, CapabilityEvent
+          from shared.proto.generated.graph_pb2   import GnnInferenceResult, TopologySnapshot
+          from shared.proto.generated.actions_pb2 import ActionRequest, GhostSimulationResult
+          from shared.proto.generated.copilot_pb2 import SessionContext, StreamEvent
+          print('All proto shim imports valid')
+          "
+
+  # ── Shared Python library ─────────────────────────────────────────────────
+  python-shared:
+    name: Shared Library — Lint + Tests
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: |
+      needs.changes.outputs.shared == 'true' ||
+      needs.changes.outputs.tests  == 'true' ||
+      github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install shared library + test deps
+        run: |
+          pip install --upgrade pip
+          pip install \
+            jsonschema==4.22.0 \
+            pytest==8.2.2 \
+            pytest-asyncio==0.23.7 \
+            pytest-cov==5.0.0 \
+            ruff==0.4.8
+
+      - name: Ruff lint
+        run: ruff check shared/ --output-format=github
+
+      - name: Run shared tests
+        run: |
+          PYTHONPATH=. pytest shared/tests/ \
+            -v --tb=short \
+            --cov=shared \
+            --cov-report=xml:coverage-shared.xml \
+            --cov-fail-under=80
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: coverage-shared.xml
+          flags: shared
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ── Layer-1 — Go eBPF Collector ──────────────────────────────────────────
+  layer1-go:
+    name: Layer 1 — Go (eBPF Collector)
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: |
+      needs.changes.outputs.layer1 == 'true' ||
+      github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: services/layer1-nervous/go.sum
+
+      - name: Install eBPF build headers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            clang llvm libelf-dev libbpf-dev linux-headers-$(uname -r)
+
+      - name: go vet
+        working-directory: services/layer1-nervous
+        run: go vet ./collector/...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.59
+          working-directory: services/layer1-nervous
+          args: --timeout=5m ./collector/...
+
+      - name: Run tests (race detector on)
+        working-directory: services/layer1-nervous
+        run: |
+          go test ./collector/... \
+            -v -race -count=1 \
+            -coverprofile=coverage-layer1.out \
+            -covermode=atomic \
+            -timeout=120s
+
+      - name: Upload Go coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-layer1
+          path: services/layer1-nervous/coverage-layer1.out
+          retention-days: 7
+
+  # ── Layer-2 — Causal GNN ─────────────────────────────────────────────────
+  layer2-gnn:
+    name: Layer 2 — Causal GNN (Python)
+    runs-on: ubuntu-latest
+    needs: [changes, python-shared]
+    if: |
+      needs.changes.outputs.layer2 == 'true' ||
+      github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/layer2-cognitive/requirements.txt
+
+      - name: Install CPU-only PyTorch + PyG + deps
+        working-directory: services/layer2-cognitive
+        run: |
+          pip install --upgrade pip
+          pip install torch==2.3.0 torchvision==0.18.0 \
+            --index-url https://download.pytorch.org/whl/cpu
+          pip install \
+            torch-geometric==2.5.3 \
+            torch-scatter==2.1.2 \
+            torch-sparse==0.6.18 \
+            torch-cluster==1.6.3 \
+            -f https://data.pyg.org/whl/torch-2.3.0+cpu.html
+          pip install -r requirements.txt \
+            --no-deps --ignore-installed torch torchvision
+
+      - name: Install shared library
+        run: PYTHONPATH=. pip install -e shared/
+
+      - name: Ruff lint
+        run: ruff check services/layer2-cognitive/ --output-format=github
+
+      - name: mypy type check (non-training modules)
+        run: |
+          mypy services/layer2-cognitive/ \
+            --ignore-missing-imports \
+            --no-strict-optional \
+            --follow-imports=skip \
+            --exclude "services/layer2-cognitive/training"
+
+      - name: Run unit tests
+        run: |
+          PYTHONPATH=. pytest tests/unit/test_layer2_gnn.py \
+            -v --tb=short -m "unit and layer2" \
+            --cov=services/layer2-cognitive \
+            --cov-report=xml:coverage-layer2.xml \
+            --timeout=120
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: coverage-layer2.xml
+          flags: layer2
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ── Layer-3 — Guardian (RL + OPA) ────────────────────────────────────────
+  layer3-guardian:
+    name: Layer 3 — Guardian (RL + OPA)
+    runs-on: ubuntu-latest
+    needs: [changes, python-shared]
+    if: |
+      needs.changes.outputs.layer3 == 'true' ||
+      github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/layer3-guardian/requirements.txt
+
+      - name: Install dependencies
+        working-directory: services/layer3-guardian
+        run: |
+          pip install --upgrade pip
+          pip install torch==2.3.0 \
+            --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Install shared library
+        run: PYTHONPATH=. pip install -e shared/
+
+      - name: Ruff lint
+        run: ruff check services/layer3-guardian/ --output-format=github
+
+      - name: Download OPA binary
+        run: |
+          curl -fsSL -o /usr/local/bin/opa \
+            https://openpolicyagent.org/downloads/v0.65.0/opa_linux_amd64_static
+          chmod +x /usr/local/bin/opa
+          opa version
+
+      - name: Validate all Rego policies (syntax check)
+        run: |
+          for policy in services/layer3-guardian/opa/policies/*.rego; do
+            echo -n "  Checking $(basename $policy) ... "
+            opa check "$policy" && echo "OK"
+          done
+
+      - name: OPA unit tests (if *_test.rego exist)
+        run: |
+          if ls services/layer3-guardian/opa/policies/*_test.rego 1>/dev/null 2>&1; then
+            opa test services/layer3-guardian/opa/policies/ -v
+          else
+            echo "No OPA test files found — skipping opa test"
+          fi
+
+      - name: Run Python unit tests
+        run: |
+          PYTHONPATH=. pytest tests/unit/test_layer3_guardian.py \
+            -v --tb=short -m "unit and layer3" \
+            --cov=services/layer3-guardian \
+            --cov-report=xml:coverage-layer3.xml \
+            --timeout=120
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: coverage-layer3.xml
+          flags: layer3
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ── Layer-4 — Co-Pilot (Claude API) ──────────────────────────────────────
+  layer4-copilot:
+    name: Layer 4 — Co-Pilot (LLM)
+    runs-on: ubuntu-latest
+    needs: [changes, python-shared]
+    if: |
+      needs.changes.outputs.layer4 == 'true' ||
+      github.event_name == 'push'
+    env:
+      ANTHROPIC_API_KEY: sk-ant-ci-test-0000000000000000000000000000000000
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/layer4-copilot/requirements.txt
+
+      - name: Install dependencies
+        working-directory: services/layer4-copilot
+        run: |
+          pip install --upgrade pip
+          pip install torch==2.3.0 \
+            --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Install shared library
+        run: PYTHONPATH=. pip install -e shared/
+
+      - name: Ruff lint
+        run: ruff check services/layer4-copilot/ --output-format=github
+
+      - name: Run unit tests (Anthropic API fully mocked)
+        run: |
+          PYTHONPATH=. pytest tests/unit/test_layer4_copilot.py \
+            -v --tb=short -m "unit and layer4" \
+            --cov=services/layer4-copilot \
+            --cov-report=xml:coverage-layer4.xml \
+            --timeout=120
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: coverage-layer4.xml
+          flags: layer4
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ── API Gateway ───────────────────────────────────────────────────────────
+  api-gateway:
+    name: API Gateway — Tests
+    runs-on: ubuntu-latest
+    needs: [changes, python-shared]
+    if: |
+      needs.changes.outputs.gateway == 'true' ||
+      github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: apps/api-gateway/requirements.txt
+
+      - name: Install dependencies
+        working-directory: apps/api-gateway
+        run: |
+          pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Install shared library
+        run: PYTHONPATH=. pip install -e shared/
+
+      - name: Ruff lint
+        run: ruff check apps/api-gateway/ --output-format=github
+
+      - name: Run unit tests
+        run: |
+          PYTHONPATH=. pytest tests/unit/test_api_gateway.py \
+            -v --tb=short -m "unit" \
+            --cov=apps/api-gateway \
+            --cov-report=xml:coverage-gateway.xml \
+            --timeout=60
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: coverage-gateway.xml
+          flags: gateway
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ── Dashboard — React/TypeScript ──────────────────────────────────────────
+  dashboard:
+    name: Dashboard — Build + Tests (React)
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: |
+      needs.changes.outputs.dashboard == 'true' ||
+      github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/dashboard
+        run: npm ci --prefer-offline
+
+      - name: TypeScript type check
+        working-directory: apps/dashboard
+        run: npx tsc --noEmit
+
+      - name: ESLint
+        working-directory: apps/dashboard
+        run: npm run lint
+
+      - name: Run Vitest
+        working-directory: apps/dashboard
+        run: npm test -- --reporter=verbose --coverage
+
+      - name: Production build
+        working-directory: apps/dashboard
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-dist
+          path: apps/dashboard/dist/
+          retention-days: 1
+
+  # ── Integration tests (in-memory Kafka, no Docker) ────────────────────────
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [layer2-gnn, layer3-guardian, layer4-copilot, api-gateway]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install all Python deps
+        run: |
+          pip install --upgrade pip
+          pip install torch==2.3.0 \
+            --index-url https://download.pytorch.org/whl/cpu
+          for req in \
+              services/layer2-cognitive/requirements.txt \
+              services/layer3-guardian/requirements.txt \
+              services/layer4-copilot/requirements.txt \
+              apps/api-gateway/requirements.txt; do
+            [ -f "$req" ] && pip install -r "$req" --quiet
+          done
+          pip install \
+            pytest==8.2.2 \
+            pytest-asyncio==0.23.7 \
+            pytest-cov==5.0.0 \
+            pytest-timeout==2.3.1
+
+      - name: Install shared library
+        run: PYTHONPATH=. pip install -e shared/
+
+      - name: Run integration tests
+        env:
+          ANTHROPIC_API_KEY: sk-ant-ci-integration-00000000000000000000000000
+          AUTONOMY_MODE: supervised
+        run: |
+          PYTHONPATH=. pytest tests/integration/ \
+            -v --tb=short -m "integration" \
+            --cov=services --cov=apps \
+            --cov-report=xml:coverage-integration.xml \
+            --timeout=120 -x
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: coverage-integration.xml
+          flags: integration
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ── E2E smoke tests (four-layer pipeline, mock transports) ───────────────
+  e2e-smoke:
+    name: E2E Smoke Tests (4-layer pipeline)
+    runs-on: ubuntu-latest
+    needs: [integration]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install torch==2.3.0 \
+            --index-url https://download.pytorch.org/whl/cpu
+          for req in \
+              services/layer2-cognitive/requirements.txt \
+              services/layer3-guardian/requirements.txt \
+              services/layer4-copilot/requirements.txt \
+              apps/api-gateway/requirements.txt; do
+            [ -f "$req" ] && pip install -r "$req" --quiet
+          done
+          pip install \
+            pytest==8.2.2 \
+            pytest-asyncio==0.23.7 \
+            pytest-timeout==2.3.1
+
+      - name: Install shared library
+        run: PYTHONPATH=. pip install -e shared/
+
+      - name: Run E2E smoke tests
+        env:
+          ANTHROPIC_API_KEY: sk-ant-ci-e2e-00000000000000000000000000000000
+          AUTONOMY_MODE: full-auto
+        run: |
+          PYTHONPATH=. pytest tests/e2e/ \
+            -v --tb=long -m "e2e" \
+            --timeout=180 -x
+
+  # ── Docker build validation (all images) ─────────────────────────────────
+  docker-build:
+    name: Docker Build (all images)
+    runs-on: ubuntu-latest
+    needs:
+      - layer1-go
+      - layer2-gnn
+      - layer3-guardian
+      - layer4-copilot
+      - api-gateway
+      - dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Layer-1 image
+        uses: docker/build-push-action@v5
+        with:
+          context: services/layer1-nervous
+          push: false
+          tags: ccdt/layer1-nervous:ci
+          cache-from: type=gha,scope=layer1
+          cache-to: type=gha,scope=layer1,mode=max
+
+      - name: Build Layer-2 image
+        uses: docker/build-push-action@v5
+        with:
+          context: services/layer2-cognitive
+          push: false
+          tags: ccdt/layer2-cognitive:ci
+          cache-from: type=gha,scope=layer2
+          cache-to: type=gha,scope=layer2,mode=max
+
+      - name: Build Layer-3 image
+        uses: docker/build-push-action@v5
+        with:
+          context: services/layer3-guardian
+          push: false
+          tags: ccdt/layer3-guardian:ci
+          cache-from: type=gha,scope=layer3
+          cache-to: type=gha,scope=layer3,mode=max
+
+      - name: Build Layer-4 image
+        uses: docker/build-push-action@v5
+        with:
+          context: services/layer4-copilot
+          push: false
+          tags: ccdt/layer4-copilot:ci
+          cache-from: type=gha,scope=layer4
+          cache-to: type=gha,scope=layer4,mode=max
+
+      - name: Build API Gateway image
+        uses: docker/build-push-action@v5
+        with:
+          context: apps/api-gateway
+          push: false
+          tags: ccdt/api-gateway:ci
+          cache-from: type=gha,scope=gateway
+          cache-to: type=gha,scope=gateway,mode=max
+
+      - name: Build Dashboard image
+        uses: docker/build-push-action@v5
+        with:
+          context: apps/dashboard
+          push: false
+          tags: ccdt/dashboard:ci
+          cache-from: type=gha,scope=dashboard
+          cache-to: type=gha,scope=dashboard,mode=max
+
+  # ── Helm lint + template render ───────────────────────────────────────────
+  helm-lint:
+    name: Helm Lint + Template Validation
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: |
+      needs.changes.outputs.infra == 'true' ||
+      github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.2
+
+      - name: Add Helm repos
+        run: |
+          helm repo add bitnami             https://charts.bitnami.com/bitnami
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+
+      - name: Helm dependency update
+        working-directory: infra/helm/ccdt
+        run: helm dependency update
+
+      - name: Helm lint (strict)
+        run: |
+          helm lint infra/helm/ccdt --strict \
+            --set global.imageTag=ci \
+            --set secrets.anthropicApiKey=sk-ant-test
+
+      - name: Helm template render (validates all manifests)
+        run: |
+          helm template ccdt infra/helm/ccdt \
+            --namespace ccdt \
+            --set global.imageTag=ci \
+            --set secrets.anthropicApiKey=sk-ant-test \
+            > /tmp/ccdt-manifests.yaml
+          echo "Rendered $(wc -l < /tmp/ccdt-manifests.yaml) lines of YAML"
+
+      - name: kubeval schema validation
+        run: |
+          curl -fsSL \
+            https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz \
+            | tar -xz -C /usr/local/bin
+          kubeval --strict --ignore-missing-schemas /tmp/ccdt-manifests.yaml
+
+  # ── Chaos tests (main branch only, or manual trigger) ────────────────────
+  chaos-tests:
+    name: Chaos Tests
+    runs-on: ubuntu-latest
+    needs: [e2e-smoke]
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.run_chaos == true)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install torch==2.3.0 \
+            --index-url https://download.pytorch.org/whl/cpu
+          for req in \
+              services/layer3-guardian/requirements.txt \
+              services/layer4-copilot/requirements.txt; do
+            [ -f "$req" ] && pip install -r "$req" --quiet
+          done
+          pip install \
+            pytest==8.2.2 \
+            pytest-asyncio==0.23.7 \
+            pytest-timeout==2.3.1
+
+      - name: Install shared library
+        run: PYTHONPATH=. pip install -e shared/
+
+      - name: Run chaos test suite (pytest)
+        run: |
+          PYTHONPATH=. pytest tests/chaos/ \
+            -v --tb=short -m "chaos" \
+            --timeout=300
+
+      - name: Chaos runner CLI — resilience gate (≥80%)
+        run: |
+          PYTHONPATH=. python tests/chaos/chaos_runner.py \
+            --verbose \
+            --fail-below 0.80 \
+            --output chaos-report.json
+
+      - name: Upload chaos report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-report-${{ github.run_id }}
+          path: chaos-report.json
+          retention-days: 30
+
+  # ── CI Gate — all required checks must pass ───────────────────────────────
+  ci-gate:
+    name: CI Gate ✓
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - secret-scan
+      - proto-validate
+      - python-shared
+      - layer1-go
+      - layer2-gnn
+      - layer3-guardian
+      - layer4-copilot
+      - api-gateway
+      - dashboard
+      - integration
+      - e2e-smoke
+      - docker-build
+      - helm-lint
+    steps:
+      - name: Check all required jobs
+        run: |
+          declare -A results=(
+            [secret-scan]="${{ needs.secret-scan.result }}"
+            [proto-validate]="${{ needs.proto-validate.result }}"
+            [python-shared]="${{ needs.python-shared.result }}"
+            [layer1-go]="${{ needs.layer1-go.result }}"
+            [layer2-gnn]="${{ needs.layer2-gnn.result }}"
+            [layer3-guardian]="${{ needs.layer3-guardian.result }}"
+            [layer4-copilot]="${{ needs.layer4-copilot.result }}"
+            [api-gateway]="${{ needs.api-gateway.result }}"
+            [dashboard]="${{ needs.dashboard.result }}"
+            [integration]="${{ needs.integration.result }}"
+            [e2e-smoke]="${{ needs.e2e-smoke.result }}"
+            [docker-build]="${{ needs.docker-build.result }}"
+            [helm-lint]="${{ needs.helm-lint.result }}"
+          )
+          FAILED=""
+          for job in "${!results[@]}"; do
+            r="${results[$job]}"
+            if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then
+              FAILED="$FAILED\n  ❌ $job ($r)"
+            fi
+          done
+          if [[ -n "$FAILED" ]]; then
+            echo -e "The following CI jobs failed:$FAILED"
+            exit 1
+          fi
+          echo "✅ All CI checks passed — PR is ready for review"

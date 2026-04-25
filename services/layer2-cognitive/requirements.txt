@@ -1,0 +1,59 @@
+# CCDT Layer-2 Cognitive Core — Python Dependencies
+# Install: pip install -r requirements.txt
+#
+# Minimum Python: 3.10
+# Recommended:    3.11
+# GPU (optional): CUDA 12.1 with torch==2.3.0+cu121
+
+# ── Deep learning ──────────────────────────────────────────────────────────────
+torch==2.3.0                        # PyTorch core
+torchvision==0.18.0                 # needed by some torch internals
+
+# ── Graph neural network ────────────────────────────────────────────────────────
+# Install torch-geometric AFTER torch:
+#   pip install torch-geometric
+# NOTE: torch-scatter, torch-sparse, torch-cluster are NOT installed —
+# they have no pre-built ARM64 wheels and torch-geometric works without
+# them for GNN inference on Apple Silicon (aarch64).
+torch-geometric==2.5.3
+
+# ── Training / experiment tracking ─────────────────────────────────────────────
+pytorch-lightning==2.3.0
+torchmetrics==1.4.0
+
+# ── Causal inference ───────────────────────────────────────────────────────────
+networkx==3.3                       # DAG construction and traversal
+scipy==1.13.1                       # sparse matrices, statistical tests
+numpy==1.26.4                       # numerical arrays
+
+# ── FastAPI inference server ───────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+pydantic==2.7.4
+pydantic-settings==2.3.4
+sse-starlette==2.1.0
+
+# ── Kafka client ───────────────────────────────────────────────────────────────
+aiokafka==0.11.0
+
+# ── Kubernetes topology bootstrap ─────────────────────────────────────────────
+kubernetes==30.1.0                  # official K8s Python client
+
+# ── Observability ─────────────────────────────────────────────────────────────
+prometheus-client==0.20.0
+
+# ── Serialisation / storage ────────────────────────────────────────────────────
+orjson==3.10.3
+PyYAML==6.0.1
+# h5py removed — not needed, checkpoints saved with torch.save()
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+structlog==24.2.0
+python-dotenv==1.0.1
+tqdm==4.66.4
+click==8.1.7                        # CLI for training scripts
+
+# Option D: traffic gen deps
+asyncpg==0.29.0
+redis==5.0.4
+docker==7.1.0

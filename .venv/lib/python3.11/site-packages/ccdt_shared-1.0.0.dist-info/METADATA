@@ -1,0 +1,38 @@
+Metadata-Version: 2.4
+Name: ccdt-shared
+Version: 1.0.0
+Summary: CCDT Shared — Protocol Buffers, JSON Schemas, Logging, and Metrics
+Author-email: CCDT Platform Engineering <platform@yourcompany.com>
+License: Apache-2.0
+Project-URL: Homepage, https://github.com/your-org/ccdt
+Project-URL: Repository, https://github.com/your-org/ccdt
+Keywords: aiops,protobuf,grpc,metrics,logging,kubernetes
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: System :: Monitoring
+Classifier: Topic :: System :: Distributed Computing
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: prometheus-client<1.0,>=0.20.0
+Requires-Dist: jsonschema<5.0,>=4.22
+Provides-Extra: proto
+Requires-Dist: protobuf<6.0,>=4.25; extra == "proto"
+Requires-Dist: grpcio<2.0,>=1.62; extra == "proto"
+Requires-Dist: grpcio-tools<2.0,>=1.62; extra == "proto"
+Provides-Extra: structlog
+Requires-Dist: structlog<25.0,>=24.1; extra == "structlog"
+Requires-Dist: rich<14.0,>=13.7; extra == "structlog"
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Requires-Dist: pytest-cov>=5.0; extra == "dev"
+Requires-Dist: mypy>=1.10; extra == "dev"
+Requires-Dist: ruff>=0.5; extra == "dev"
+Requires-Dist: black>=24.4; extra == "dev"
+Provides-Extra: all
+Requires-Dist: ccdt-shared[proto]; extra == "all"
+Requires-Dist: ccdt-shared[structlog]; extra == "all"
+Requires-Dist: ccdt-shared[dev]; extra == "all"

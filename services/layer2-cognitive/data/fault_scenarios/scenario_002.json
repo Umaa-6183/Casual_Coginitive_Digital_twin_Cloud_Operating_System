@@ -1,0 +1,96 @@
+{
+  "scenario_id": "fault_002",
+  "description": "Redis maxmemory eviction storm due to query flood",
+  "nodes": [
+    {
+      "id": "api-gw",
+      "label": "API Gateway",
+      "status": "warning",
+      "layer": "network",
+      "cpu": 48,
+      "mem": 55,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 5,
+      "sched_latency_p99_ms": 12,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 2,
+      "node_label": 0
+    },
+    {
+      "id": "order-svc",
+      "label": "Order Service",
+      "status": "warning",
+      "layer": "service",
+      "cpu": 78,
+      "mem": 72,
+      "restarts": 1,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 22,
+      "sched_latency_p99_ms": 55,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 3,
+      "node_label": 1
+    },
+    {
+      "id": "redis",
+      "label": "Redis Cache",
+      "status": "critical",
+      "layer": "data",
+      "cpu": 88,
+      "mem": 95,
+      "restarts": 0,
+      "oom_kills": 1,
+      "tcp_retransmit_rate": 0,
+      "sched_latency_p99_ms": 0,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 2,
+      "node_label": 1
+    },
+    {
+      "id": "postgres",
+      "label": "PostgreSQL",
+      "status": "healthy",
+      "layer": "data",
+      "cpu": 32,
+      "mem": 58,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 0,
+      "sched_latency_p99_ms": 8,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 2,
+      "node_label": 0
+    }
+  ],
+  "edges": [
+    {
+      "from": "api-gw",
+      "to": "order-svc",
+      "latency_ms": 65,
+      "error_rate": 0.042,
+      "request_rate": 320,
+      "causal": true
+    },
+    {
+      "from": "order-svc",
+      "to": "redis",
+      "latency_ms": 145,
+      "error_rate": 0.312,
+      "request_rate": 2400,
+      "causal": true
+    },
+    {
+      "from": "order-svc",
+      "to": "postgres",
+      "latency_ms": 8,
+      "error_rate": 0.001,
+      "request_rate": 80,
+      "causal": false
+    }
+  ]
+}

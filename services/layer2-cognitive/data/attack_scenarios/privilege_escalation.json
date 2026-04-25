@@ -1,0 +1,96 @@
+{
+  "scenario_id": "attack_priv_esc",
+  "description": "Attacker acquires CAP_SYS_ADMIN on order-svc, triggers PostgreSQL OOM via memory manipulation",
+  "nodes": [
+    {
+      "id": "order-svc",
+      "label": "Order Service",
+      "status": "critical",
+      "layer": "service",
+      "cpu": 94,
+      "mem": 78,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 8,
+      "sched_latency_p99_ms": 12,
+      "cap_event": 1,
+      "file_event": 1,
+      "degree": 4,
+      "node_label": 2
+    },
+    {
+      "id": "postgres",
+      "label": "PostgreSQL",
+      "status": "critical",
+      "layer": "data",
+      "cpu": 91,
+      "mem": 89,
+      "restarts": 2,
+      "oom_kills": 2,
+      "tcp_retransmit_rate": 0,
+      "sched_latency_p99_ms": 0,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 3,
+      "node_label": 1
+    },
+    {
+      "id": "notify-svc",
+      "label": "Notify Service",
+      "status": "warning",
+      "layer": "service",
+      "cpu": 72,
+      "mem": 62,
+      "restarts": 1,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 14,
+      "sched_latency_p99_ms": 70,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 2,
+      "node_label": 1
+    },
+    {
+      "id": "api-gw",
+      "label": "API Gateway",
+      "status": "warning",
+      "layer": "network",
+      "cpu": 58,
+      "mem": 64,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 9,
+      "sched_latency_p99_ms": 11,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 2,
+      "node_label": 0
+    }
+  ],
+  "edges": [
+    {
+      "from": "api-gw",
+      "to": "order-svc",
+      "latency_ms": 145,
+      "error_rate": 0.09,
+      "request_rate": 280,
+      "causal": true
+    },
+    {
+      "from": "order-svc",
+      "to": "postgres",
+      "latency_ms": 280,
+      "error_rate": 0.14,
+      "request_rate": 540,
+      "causal": true
+    },
+    {
+      "from": "order-svc",
+      "to": "notify-svc",
+      "latency_ms": 88,
+      "error_rate": 0.05,
+      "request_rate": 120,
+      "causal": true
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ccdt.io/schemas/copilot_session.schema.json",
+  "title": "CCDTCopilotSession",
+  "description": "CCDT Layer-4 Co-Pilot conversation session — one operator's rolling 20-turn dialogue with the Claude AI assistant.",
+  "type": "object",
+
+  "required": ["session_id", "operator_id", "state", "created_at", "schema_ver"],
+
+  "properties": {
+    "session_id":     { "type": "string", "format": "uuid" },
+    "operator_id":    { "type": "string" },
+    "operator_name":  { "type": "string" },
+    "state": {
+      "type": "string",
+      "enum": ["ACTIVE", "IDLE", "CLOSED", "ERROR"]
+    },
+    "history": {
+      "type": "array",
+      "maxItems": 40,
+      "items": { "$ref": "#/$defs/ChatMessage" }
+    },
+    "active_incident_id":  { "type": "string" },
+    "created_at":          { "type": "string", "format": "date-time" },
+    "last_activity_at":    { "type": "string", "format": "date-time" },
+    "turn_count":          { "type": "integer", "minimum": 0 },
+    "system_prompt_hash":  { "type": "string" },
+    "schema_ver":          { "type": "string", "const": "1.0" },
+    "total_token_usage":   { "$ref": "#/$defs/TokenUsage" }
+  },
+
+  "$defs": {
+    "TokenUsage": {
+      "type": "object",
+      "properties": {
+        "input_tokens":       { "type": "integer", "minimum": 0 },
+        "output_tokens":      { "type": "integer", "minimum": 0 },
+        "cache_read_tokens":  { "type": "integer", "minimum": 0 },
+        "cache_write_tokens": { "type": "integer", "minimum": 0 },
+        "estimated_cost_usd": { "type": "number",  "minimum": 0 }
+      }
+    },
+
+    "ToolCall": {
+      "type": "object",
+      "required": ["tool_call_id", "tool_name"],
+      "properties": {
+        "tool_call_id": { "type": "string" },
+        "tool_name": {
+          "type": "string",
+          "enum": ["UNKNOWN","GET_TOPOLOGY","GET_EBPF_EVENTS","RUN_GHOST_PREVIEW",
+                   "PROPOSE_ACTION","GET_LOGS","GET_METRICS","GET_INCIDENT_HISTORY","SEARCH_RUNBOOKS"]
+        },
+        "params_json": { "type": "string" },
+        "called_at":   { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "ToolResult": {
+      "type": "object",
+      "required": ["tool_call_id"],
+      "properties": {
+        "tool_call_id": { "type": "string" },
+        "tool_name":    { "type": "string" },
+        "success":      { "type": "boolean" },
+        "result_json":  { "type": "string" },
+        "error":        { "type": "string" },
+        "summary":      { "type": "string" },
+        "duration_ms":  { "type": "number", "minimum": 0 },
+        "returned_at":  { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "ChatMessage": {
+      "type": "object",
+      "required": ["message_id", "role"],
+      "properties": {
+        "message_id":     { "type": "string", "format": "uuid" },
+        "session_id":     { "type": "string" },
+        "role": {
+          "type": "string",
+          "enum": ["user", "assistant", "system", "tool"]
+        },
+        "message_type": {
+          "type": "string",
+          "enum": ["TEXT","INCIDENT_REPORT","ACTION_PROPOSAL","ACTION_RESULT",
+                   "TOPOLOGY_EMBED","TOOL_CALL","TOOL_RESULT","ERROR"]
+        },
+        "content":        { "type": "string" },
+        "tool_call":      { "$ref": "#/$defs/ToolCall" },
+        "tool_result":    { "$ref": "#/$defs/ToolResult" },
+        "model":          { "type": "string" },
+        "stop_reason":    { "type": "string" },
+        "token_usage":    { "$ref": "#/$defs/TokenUsage" },
+        "created_at":     { "type": "string", "format": "date-time" },
+        "turn_index":     { "type": "integer", "minimum": 0 },
+        "auto_injected":  { "type": "boolean" },
+        "api_latency_ms": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

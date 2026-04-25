@@ -1,0 +1,135 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT Layer-2 Cognitive Core — HorizontalPodAutoscaler + PodDisruptionBudget
+# ═══════════════════════════════════════════════════════════════════════════════
+# Scales the GNN inference server from 2 → 8 replicas based on:
+#   • CPU utilisation (primary metric, target 65%)
+#   • Memory utilisation (secondary, target 70%)
+#   • Custom metric: ccdt_gnn_inference_queue_depth
+#     (queue depth > 10 triggers scale-up regardless of CPU)
+#
+# Requires: metrics-server + Prometheus Adapter for custom metrics
+# ═══════════════════════════════════════════════════════════════════════════════
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: layer2-cognitive
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:      layer2-cognitive
+    app.kubernetes.io/component: cognitive-core
+    app.kubernetes.io/part-of:   ccdt-platform
+  annotations:
+    description: "Scales GNN inference server based on CPU + inference queue depth"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind:       Deployment
+    name:       layer2-cognitive
+
+  minReplicas: 2
+  maxReplicas: 8
+
+  metrics:
+    # ── CPU utilisation ───────────────────────────────────────────────────────
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type:               Utilization
+          averageUtilization: 65
+
+    # ── Memory utilisation ────────────────────────────────────────────────────
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type:               Utilization
+          averageUtilization: 70
+
+    # ── Custom metric: GNN inference queue depth ──────────────────────────────
+    # Exposed by the inference server on /metrics as:
+    #   ccdt_gnn_inference_queue_depth (gauge)
+    # Requires prometheus-adapter with rules mapping this metric.
+    - type: Pods
+      pods:
+        metric:
+          name: ccdt_gnn_inference_queue_depth
+        target:
+          type:         AverageValue
+          averageValue: "5"     # scale up when avg queue > 5 items per pod
+
+    # ── Custom metric: inference latency P99 ─────────────────────────────────
+    # Scale up if P99 inference latency exceeds 200 ms
+    - type: Pods
+      pods:
+        metric:
+          name: ccdt_gnn_inference_duration_p99_seconds
+        target:
+          type:         AverageValue
+          averageValue: "0.2"   # 200 ms
+
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30      # fast scale-up during incidents
+      policies:
+        - type:          Pods
+          value:         2
+          periodSeconds: 30               # add up to 2 pods every 30 s
+        - type:          Percent
+          value:         100
+          periodSeconds: 60               # or double pods every 60 s
+      selectPolicy: Max                   # take the larger of the two policies
+
+    scaleDown:
+      stabilizationWindowSeconds: 300     # slow scale-down (5 min cool-off)
+      policies:
+        - type:          Pods
+          value:         1
+          periodSeconds: 120              # remove at most 1 pod every 2 min
+      selectPolicy: Min                   # conservative scale-down
+
+---
+# ── PodDisruptionBudget: always keep ≥ 1 GNN replica available ───────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: layer2-cognitive
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:      layer2-cognitive
+    app.kubernetes.io/component: cognitive-core
+    app.kubernetes.io/part-of:   ccdt-platform
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: layer2-cognitive
+
+---
+# ── Prometheus Adapter Rule (informational — apply to prometheus-adapter config)
+# Add this to the prometheus-adapter ConfigMap under rules:
+#
+# rules:
+#   - seriesQuery: 'ccdt_gnn_inference_queue_depth{namespace!="",pod!=""}'
+#     resources:
+#       overrides:
+#         namespace: {resource: "namespace"}
+#         pod:       {resource: "pod"}
+#     name:
+#       matches: "ccdt_gnn_inference_queue_depth"
+#       as:      "ccdt_gnn_inference_queue_depth"
+#     metricsQuery: 'avg_over_time(ccdt_gnn_inference_queue_depth{<<.LabelMatchers>>}[2m])'
+#
+#   - seriesQuery: 'ccdt_gnn_inference_duration_seconds_bucket{namespace!="",pod!=""}'
+#     resources:
+#       overrides:
+#         namespace: {resource: "namespace"}
+#         pod:       {resource: "pod"}
+#     name:
+#       matches: "ccdt_gnn_inference_duration_seconds_bucket"
+#       as:      "ccdt_gnn_inference_duration_p99_seconds"
+#     metricsQuery: >
+#       histogram_quantile(0.99,
+#         rate(ccdt_gnn_inference_duration_seconds_bucket{<<.LabelMatchers>>}[2m])
+#       )

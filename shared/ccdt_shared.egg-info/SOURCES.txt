@@ -1,0 +1,9 @@
+pyproject.toml
+ccdt_shared.egg-info/PKG-INFO
+ccdt_shared.egg-info/SOURCES.txt
+ccdt_shared.egg-info/dependency_links.txt
+ccdt_shared.egg-info/requires.txt
+ccdt_shared.egg-info/top_level.txt
+tests/test_proto_shims.py
+tests/test_schemas.py
+tests/test_utils.py

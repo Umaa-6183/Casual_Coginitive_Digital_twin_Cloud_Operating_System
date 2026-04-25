@@ -1,0 +1,329 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT Layer-2 Cognitive Core — Deployment + Service + ConfigMap
+# ═══════════════════════════════════════════════════════════════════════════════
+# Runs the Causal GNN inference server (PyTorch Geometric + FastAPI).
+# Consumes eBPF events from Kafka, maintains live topology graph,
+# publishes GNN inferences every 5 s.
+# ═══════════════════════════════════════════════════════════════════════════════
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: layer2-cognitive
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:      layer2-cognitive
+    app.kubernetes.io/component: cognitive-core
+    app.kubernetes.io/part-of:   ccdt-platform
+
+---
+# ── ClusterRole: read pods + nodes for topology bootstrap ────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ccdt-layer2-cognitive
+  labels:
+    app.kubernetes.io/name:    layer2-cognitive
+    app.kubernetes.io/part-of: ccdt-platform
+rules:
+  - apiGroups: [""]
+    resources:  [pods, nodes, services, endpoints, namespaces]
+    verbs:      [get, list, watch]
+  - apiGroups: [apps]
+    resources:  [deployments, replicasets, statefulsets, daemonsets]
+    verbs:      [get, list, watch]
+  - apiGroups: [metrics.k8s.io]
+    resources:  [pods, nodes]
+    verbs:      [get, list]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ccdt-layer2-cognitive
+  labels:
+    app.kubernetes.io/name:    layer2-cognitive
+    app.kubernetes.io/part-of: ccdt-platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind:     ClusterRole
+  name:     ccdt-layer2-cognitive
+subjects:
+  - kind:      ServiceAccount
+    name:      layer2-cognitive
+    namespace: ccdt
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: layer2-cognitive
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:      layer2-cognitive
+    app.kubernetes.io/component: cognitive-core
+    app.kubernetes.io/part-of:   ccdt-platform
+    app.kubernetes.io/version:   "1.0.0"
+  annotations:
+    description: "CCDT Layer-2 Causal GNN inference server"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: layer2-cognitive
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge:       1
+      maxUnavailable: 0    # never reduce below 2 replicas during updates
+
+  template:
+    metadata:
+      labels:
+        app:                         layer2-cognitive
+        app.kubernetes.io/name:      layer2-cognitive
+        app.kubernetes.io/component: cognitive-core
+        app.kubernetes.io/part-of:   ccdt-platform
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "9090"
+        prometheus.io/path:   "/metrics"
+
+    spec:
+      serviceAccountName: layer2-cognitive
+
+      # Anti-affinity: spread replicas across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: layer2-cognitive
+                topologyKey: kubernetes.io/hostname
+
+      # Prefer nodes with GPU (optional — falls back to CPU)
+      nodeSelector: {}
+      tolerations:
+        - key:      nvidia.com/gpu
+          operator: Exists
+          effect:   NoSchedule
+
+      # Init container: wait for Kafka to be ready before starting GNN
+      initContainers:
+        - name: wait-for-kafka
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for Kafka at $KAFKA_BOOTSTRAP_SERVERS..."
+              until nc -z ${KAFKA_HOST:-kafka} 9092; do
+                echo "Kafka not ready — retrying in 5s"
+                sleep 5
+              done
+              echo "Kafka ready."
+          env:
+            - name: KAFKA_HOST
+              value: kafka
+
+      containers:
+        - name: gnn-server
+          image: ccdt/layer2-cognitive:1.0.0
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - python
+            - -m
+            - uvicorn
+            - inference.server:app
+            - --host=0.0.0.0
+            - --port=8001
+            - --workers=1
+            - --log-level=info
+
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                secretKeyRef:
+                  name: ccdt-kafka-credentials
+                  key:  bootstrap-servers
+            - name: MODEL_PATH
+              value: /app/checkpoints/causal_gnn_best.pt
+            - name: INFERENCE_DEVICE
+              value: cpu
+            - name: INFER_INTERVAL_S
+              value: "5"
+            - name: INFERENCE_CACHE_TTL_S
+              value: "2"
+            - name: PORT
+              value: "8001"
+            - name: LOG_LEVEL
+              value: info
+            # Tell PyTorch to use all available cores
+            - name: OMP_NUM_THREADS
+              value: "4"
+            - name: MKL_NUM_THREADS
+              value: "4"
+
+          ports:
+            - name:          http
+              containerPort: 8001
+              protocol:      TCP
+            - name:          metrics
+              containerPort: 9090
+              protocol:      TCP
+
+          volumeMounts:
+            - name:      model-storage
+              mountPath: /app/checkpoints
+              readOnly:  true
+            - name:      gnn-config
+              mountPath: /app/config
+              readOnly:  true
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 60
+            periodSeconds:       20
+            failureThreshold:    3
+            timeoutSeconds:      10
+
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8001
+            initialDelaySeconds: 30
+            periodSeconds:       10
+            failureThreshold:    3
+            timeoutSeconds:      10
+
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            failureThreshold:    30    # allow up to 5 min for model loading
+            periodSeconds:       10
+
+          resources:
+            requests:
+              cpu:    "1000m"
+              memory: "2Gi"
+            limits:
+              cpu:    "4000m"
+              memory: "8Gi"
+
+          securityContext:
+            runAsNonRoot:           true
+            runAsUser:              1000
+            runAsGroup:             1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+
+      terminationGracePeriodSeconds: 60
+
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: layer2-model-pvc
+            readOnly: true
+        - name: gnn-config
+          configMap:
+            name: layer2-cognitive-config
+
+---
+# ── PVC: store trained GNN checkpoints ───────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: layer2-model-pvc
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:    layer2-cognitive
+    app.kubernetes.io/part-of: ccdt-platform
+spec:
+  accessModes: [ReadOnlyMany]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# ── Service ───────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: layer2-cognitive
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:      layer2-cognitive
+    app.kubernetes.io/component: cognitive-core
+    app.kubernetes.io/part-of:   ccdt-platform
+spec:
+  selector:
+    app: layer2-cognitive
+  ports:
+    - name:       http
+      port:       8001
+      targetPort: http
+      protocol:   TCP
+    - name:       metrics
+      port:       9090
+      targetPort: metrics
+      protocol:   TCP
+  type: ClusterIP
+
+---
+# ── ConfigMap ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: layer2-cognitive-config
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:    layer2-cognitive
+    app.kubernetes.io/part-of: ccdt-platform
+data:
+  model-config.yaml: |
+    model:
+      hidden_dim:      128
+      num_layers:      4
+      heads:           8
+      node_feat_dim:   16
+      edge_feat_dim:   4
+      num_classes:     3
+      dropout:         0.1
+
+    inference:
+      interval_s:      5.0
+      cache_ttl_s:     2.0
+      confidence_min:  0.65
+      device:          cpu
+
+    kafka:
+      input_topic:     ccdt.ebpf.events
+      output_topic:    ccdt.gnn.inference
+      consumer_group:  ccdt-gnn-dag-builder
+      batch_size:      500
+
+    topology:
+      max_nodes:        50
+      seed_services:
+        - api-gw
+        - auth-svc
+        - order-svc
+        - payment-svc
+        - inventory-svc
+        - notify-svc
+        - postgres
+        - redis
+        - kafka
+        - monitoring
+
+  log-level: info

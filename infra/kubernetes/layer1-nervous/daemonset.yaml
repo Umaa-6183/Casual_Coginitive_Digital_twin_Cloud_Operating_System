@@ -1,0 +1,299 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT Layer-1 Nervous System — DaemonSet (eBPF Collector)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Runs one collector pod on EVERY Linux node in the cluster.
+# Requires:
+#   • privileged: true          (eBPF program loading via bpf() syscall)
+#   • hostPID: true             (see process tree across the node)
+#   • hostNetwork: true         (capture host-namespace TCP events)
+#   • /sys + /proc mounts       (kernel tracepoints + procfs metadata)
+#   • /var/run/docker.sock      (container ID → pod name resolution)
+#   • CAP_SYS_ADMIN + CAP_BPF  (eBPF map creation + program loading)
+# ═══════════════════════════════════════════════════════════════════════════════
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: layer1-nervous
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:      layer1-nervous
+    app.kubernetes.io/component: nervous-system
+    app.kubernetes.io/part-of:   ccdt-platform
+    app.kubernetes.io/version:   "1.0.0"
+  annotations:
+    description: "CCDT Layer-1 eBPF telemetry collector — runs on every node"
+spec:
+  selector:
+    matchLabels:
+      app: layer1-nervous
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1         # update one node at a time
+
+  template:
+    metadata:
+      labels:
+        app:                         layer1-nervous
+        app.kubernetes.io/name:      layer1-nervous
+        app.kubernetes.io/component: nervous-system
+        app.kubernetes.io/part-of:   ccdt-platform
+        # Opt out of restricted PSA for this privileged DaemonSet
+        pod-security.kubernetes.io/enforce: privileged
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "9100"
+        prometheus.io/path:   "/metrics"
+
+    spec:
+      serviceAccountName: layer1-nervous
+      hostPID:            true
+      hostNetwork:        true
+      dnsPolicy:          ClusterFirstWithHostNet
+
+      # Only schedule on Linux nodes with kernel ≥ 5.15 (BTF required for CO-RE)
+      nodeSelector:
+        kubernetes.io/os: linux
+
+      tolerations:
+        # Run on ALL nodes including control-plane and tainted nodes
+        - operator: Exists
+          effect:   NoSchedule
+        - operator: Exists
+          effect:   NoExecute
+        - operator: Exists
+          effect:   PreferNoSchedule
+
+      priorityClassName: system-node-critical
+
+      # Init container: verify kernel version and BTF availability
+      initContainers:
+        - name: kernel-check
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              KERNEL=$(uname -r | cut -d. -f1-2 | tr -d .)
+              if [ "$KERNEL" -lt "515" ]; then
+                echo "ERROR: kernel $(uname -r) < 5.15 — eBPF CO-RE requires 5.15+"
+                exit 1
+              fi
+              if [ ! -f /sys/kernel/btf/vmlinux ]; then
+                echo "ERROR: /sys/kernel/btf/vmlinux not found — BTF not available"
+                exit 1
+              fi
+              echo "Kernel check passed: $(uname -r)"
+          volumeMounts:
+            - name: sys
+              mountPath: /sys
+              readOnly: true
+
+      containers:
+        - name: collector
+          # Build from ccdt/services/layer1-nervous/
+          image: ccdt/layer1-nervous:1.0.0
+          imagePullPolicy: IfNotPresent
+
+          # eBPF programs require CAP_SYS_ADMIN and CAP_BPF
+          securityContext:
+            privileged:             true
+            runAsUser:              0
+            readOnlyRootFilesystem: false
+            capabilities:
+              add:
+                - SYS_ADMIN
+                - BPF
+                - NET_ADMIN
+                - PERFMON
+
+          args:
+            - --node=$(NODE_NAME)
+            - --kafka=$(KAFKA_BOOTSTRAP_SERVERS)
+            - --kafka-topic=ccdt.ebpf.events
+            - --http-port=9100
+            - --log-level=$(LOG_LEVEL)
+
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                secretKeyRef:
+                  name: ccdt-kafka-credentials
+                  key:  bootstrap-servers
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: ccdt-config
+                  key:  log-level
+                  optional: true
+            # eBPF buffer sizes
+            - name: EBPF_RING_BUFFER_SIZE_MB
+              value: "64"
+            - name: EBPF_PERF_BUFFER_PAGES
+              value: "512"
+
+          ports:
+            - name:          metrics
+              containerPort: 9100
+              protocol:      TCP
+
+          volumeMounts:
+            # Kernel tracepoints and BTF
+            - name:      sys
+              mountPath: /sys
+              readOnly:  false    # eBPF needs write for perf_event_open
+            # Process filesystem (for PID → pod metadata lookup)
+            - name:      proc
+              mountPath: /proc
+              readOnly:  true
+            # Container runtime socket (CRI: containerd or docker)
+            - name:      cri-sock
+              mountPath: /run/containerd/containerd.sock
+              readOnly:  true
+            # Docker socket fallback
+            - name:      docker-sock
+              mountPath: /var/run/docker.sock
+              readOnly:  true
+            # eBPF program object files (compiled by Makefile)
+            - name:      ebpf-progs
+              mountPath: /opt/ccdt/bpf
+              readOnly:  true
+            # Tmpfs for eBPF pin maps (/sys/fs/bpf is preferred but needs mount)
+            - name:      bpf-maps
+              mountPath: /sys/fs/bpf
+            # Kernel modules dir
+            - name:      lib-modules
+              mountPath: /lib/modules
+              readOnly:  true
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9100
+            initialDelaySeconds: 30
+            periodSeconds:       20
+            failureThreshold:    3
+            timeoutSeconds:      5
+
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9100
+            initialDelaySeconds: 15
+            periodSeconds:       10
+            failureThreshold:    3
+
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "128Mi"
+            limits:
+              cpu:    "500m"
+              memory: "512Mi"
+
+      terminationGracePeriodSeconds: 30
+
+      volumes:
+        - name: sys
+          hostPath:
+            path: /sys
+            type: Directory
+        - name: proc
+          hostPath:
+            path: /proc
+            type: Directory
+        - name: cri-sock
+          hostPath:
+            path: /run/containerd/containerd.sock
+            type: Socket
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+            type: FileOrCreate
+        - name: ebpf-progs
+          hostPath:
+            path: /opt/ccdt/bpf
+            type: DirectoryOrCreate
+        - name: bpf-maps
+          hostPath:
+            path: /sys/fs/bpf
+            type: DirectoryOrCreate
+        - name: lib-modules
+          hostPath:
+            path: /lib/modules
+            type: Directory
+
+---
+# ── Service: expose metrics endpoint for Prometheus scraping ─────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: layer1-nervous
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:      layer1-nervous
+    app.kubernetes.io/component: nervous-system
+    app.kubernetes.io/part-of:   ccdt-platform
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "9100"
+spec:
+  selector:
+    app: layer1-nervous
+  clusterIP: None    # Headless — Prometheus discovers all DaemonSet pods via DNS
+  ports:
+    - name:     metrics
+      port:     9100
+      protocol: TCP
+      targetPort: metrics
+    - name:     http
+      port:     9101
+      protocol: TCP
+      targetPort: 9100
+
+---
+# ── ConfigMap: eBPF probe configuration ───────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: layer1-ebpf-config
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:    layer1-nervous
+    app.kubernetes.io/part-of: ccdt-platform
+data:
+  # Probes to enable (comma-separated)
+  enabled-probes: "capability,oom,tcp_retransmit,sched_latency,file_access,execve"
+
+  # Capability events: list of cap names to watch
+  capability-watch-list: >
+    CAP_SYS_ADMIN,CAP_SYS_PTRACE,CAP_SYS_MODULE,CAP_NET_ADMIN,
+    CAP_SETUID,CAP_SETGID,CAP_DAC_OVERRIDE,CAP_SYS_RAWIO
+
+  # Scheduler latency threshold (us) — events below this are dropped
+  sched-latency-threshold-us: "5000"
+
+  # TCP retransmit rate threshold (per 5s window) — below this is dropped
+  tcp-retransmit-threshold: "10"
+
+  # Sensitive file paths to watch (prefix match)
+  file-watch-paths: >
+    /etc/shadow,/etc/passwd,/etc/kubernetes,/var/run/secrets,
+    /root/.ssh,/proc/kcore,/proc/mem,/dev/mem
+
+  # Batch size for Kafka producer
+  kafka-batch-size: "500"
+  kafka-linger-ms:  "50"

@@ -1,0 +1,130 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT Event Bus — Kafka Topic: ccdt.ebpf.events
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Purpose:
+#   Carries real-time eBPF kernel telemetry events emitted by the Layer-1
+#   Nervous System collector (Go + libbpf). Every event is a raw kernel
+#   observation from one of the eBPF probes.
+#
+# Producers:   layer1-nervous/collector  (one per K8s node)
+# Consumers:   layer2-cognitive/dag_builder  (topology feature updates)
+#              layer4-copilot              (context_builder eBPF feed)
+#              api-gateway                 (dashboard live feed)
+#
+# Throughput estimate:
+#   ~5,000 events/s per node at steady state
+#   ~50,000 events/s per node during a security incident
+#   Retention: 24 hours (events are short-lived; L2 aggregates into topology)
+#
+# Message schema (JSON):
+# {
+#   "ts":          1710000000000,           // Unix ms
+#   "node":        "worker-node-1",         // K8s node hostname
+#   "pod":         "order-svc-7d8f9-xyz",   // Pod name (empty = host-level)
+#   "namespace":   "production",
+#   "type":        "capability",            // See event_types below
+#   "comm":        "python3",               // Process name (comm)
+#   "pid":         12345,
+#   "uid":         0,
+#   "severity":    "critical",             // info | warning | critical
+#   "payload":     { ... }                 // Type-specific fields
+# }
+#
+# Event types and their payload fields:
+#   capability:   { cap_name, cap_value, syscall }          // CAP_SYS_ADMIN etc.
+#   oom:          { oom_score, pages_freed, victim_pid }    // OOM kill event
+#   tcp:          { src_ip, dst_ip, src_port, dst_port,     // TCP retransmit
+#                   retransmit_count, rtt_ms }
+#   sched:        { latency_us, cpu_id, prio }              // Scheduler wakeup latency
+#   file:         { path, flags, mode }                     // Sensitive file access
+#   syscall:      { syscall_nr, syscall_name, args_hash }   // Suspicious syscall
+#   execve:       { filename, argv_hash, parent_comm }      // Process exec
+#   network:      { proto, dst_ip, dst_port, bytes }        // Outbound connection
+# ═══════════════════════════════════════════════════════════════════════════════
+
+topic:
+  name: ccdt.ebpf.events
+  # One partition per Kafka broker for maximum parallelism.
+  # Layer-2 consumers use pod-name as the partition key so all events
+  # from the same pod go to the same partition (ordering guarantee).
+  partitions: 12
+  replication_factor: 3
+
+  config:
+    # Retain for 24 hours — events have no long-term value, GNN aggregates them
+    retention.ms: "86400000"            # 24 h
+    retention.bytes: "10737418240"      # 10 GB per partition ceiling
+    # Optimise for high-throughput small messages (avg ~512 bytes per event)
+    segment.ms: "3600000"              # Roll segment every 1 h
+    segment.bytes: "1073741824"        # 1 GB per segment
+    # Compression — LZ4 is optimal for small JSON messages (low CPU, fast)
+    compression.type: lz4
+    # Minimal ISR to tolerate one broker failure without blocking producers
+    min.insync.replicas: "2"
+    # Log compaction disabled — we want time-based retention, not key-based
+    cleanup.policy: delete
+    # Message size — eBPF events are small; 64 KB ceiling is generous
+    max.message.bytes: "65536"
+
+  # Schema hint (informational — not enforced by Kafka itself)
+  schema:
+    format: json
+    key:
+      description: "Pod name (routing key for partition affinity)"
+      type: string
+      example: "order-svc-7d8f9-xyz"
+    value:
+      description: "eBPF kernel event"
+      required_fields:
+        - ts
+        - node
+        - type
+        - comm
+        - severity
+      optional_fields:
+        - pod
+        - namespace
+        - pid
+        - uid
+        - payload
+
+  # Consumer group definitions (informational)
+  consumer_groups:
+    - id: ccdt-gnn-dag-builder
+      description: "Layer-2 DAG builder — reads for topology feature updates"
+      auto_offset_reset: latest
+      max_poll_records: 500
+      session_timeout_ms: 30000
+
+    - id: ccdt-api-gateway-ebpf
+      description: "API Gateway — forwards to dashboard WebSocket stream"
+      auto_offset_reset: latest
+      max_poll_records: 100
+      session_timeout_ms: 10000
+
+    - id: ccdt-copilot-context
+      description: "Layer-4 Co-Pilot — context builder eBPF feed"
+      auto_offset_reset: latest
+      max_poll_records: 50
+      session_timeout_ms: 10000
+
+  # Monitoring / alerting hints
+  alerts:
+    - name: high_lag
+      description: "Consumer group lag > 10,000 — collector faster than consumer"
+      threshold_messages: 10000
+    - name: capability_storm
+      description: "capability events > 100/s for same pod — possible attack"
+      threshold_rate_per_second: 100
+      event_type: capability
+
+  # Kafka topic creation command (for reference):
+  # kafka-topics.sh --create \
+  #   --bootstrap-server kafka:9092 \
+  #   --topic ccdt.ebpf.events \
+  #   --partitions 12 \
+  #   --replication-factor 3 \
+  #   --config retention.ms=86400000 \
+  #   --config compression.type=lz4 \
+  #   --config max.message.bytes=65536

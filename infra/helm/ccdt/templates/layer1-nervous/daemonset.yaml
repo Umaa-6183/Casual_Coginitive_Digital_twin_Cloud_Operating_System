@@ -1,0 +1,185 @@
+{{- if .Values.layer1.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: layer1-nervous
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer1-nervous" .) | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-layer1-nervous
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer1-nervous" .) | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods, nodes, namespaces, endpoints, services, events]
+    verbs:     [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, daemonsets, replicasets, statefulsets]
+    verbs:     [get, list, watch]
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes, pods]
+    verbs:     [get, list]
+  - apiGroups: [""]
+    resources: [nodes/proxy, nodes/stats]
+    verbs:     [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-layer1-nervous
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer1-nervous" .) | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind:     ClusterRole
+  name:     {{ .Release.Name }}-layer1-nervous
+subjects:
+  - kind:      ServiceAccount
+    name:      layer1-nervous
+    namespace: {{ include "ccdt.namespace" . }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: layer1-nervous
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer1-nervous" .) | nindent 4 }}
+  annotations:
+    {{- with .Values.global.commonAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "ccdt.componentSelectorLabels" (list "layer1-nervous" .) | nindent 6 }}
+  updateStrategy:
+    type: {{ .Values.layer1.updateStrategy.type }}
+    rollingUpdate:
+      maxUnavailable: {{ .Values.layer1.updateStrategy.maxUnavailable }}
+  template:
+    metadata:
+      labels:
+        {{- include "ccdt.componentLabels" (list "layer1-nervous" .) | nindent 8 }}
+        pod-security.kubernetes.io/enforce: privileged
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "9100"
+        prometheus.io/path:   "/metrics"
+        {{- with .Values.global.commonAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: layer1-nervous
+      hostPID:     {{ .Values.layer1.hostPID }}
+      hostNetwork: {{ .Values.layer1.hostNetwork }}
+      dnsPolicy: ClusterFirstWithHostNet
+
+      nodeSelector:
+        {{- toYaml .Values.layer1.nodeSelector | nindent 8 }}
+
+      tolerations:
+        {{- toYaml .Values.layer1.tolerations | nindent 8 }}
+
+      priorityClassName: system-node-critical
+
+      initContainers:
+        - name: kernel-check
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              KERNEL=$(uname -r | cut -d. -f1-2 | tr -d .)
+              [ "$KERNEL" -ge "515" ] || { echo "ERROR: kernel $(uname -r) < 5.15"; exit 1; }
+              [ -f /sys/kernel/btf/vmlinux ] || { echo "ERROR: BTF not available"; exit 1; }
+              echo "Kernel OK: $(uname -r)"
+          volumeMounts:
+            - name: sys
+              mountPath: /sys
+              readOnly: true
+
+      containers:
+        - name: collector
+          image: {{ include "ccdt.image" (dict "ctx" . "repo" .Values.layer1.image "global" .Values.global) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            privileged: true
+            runAsUser:  0
+            capabilities:
+              add: [SYS_ADMIN, BPF, NET_ADMIN, PERFMON]
+          args:
+            - --node=$(NODE_NAME)
+            - --kafka=$(KAFKA_BOOTSTRAP_SERVERS)
+            - --kafka-topic=ccdt.ebpf.events
+            - --http-port=9100
+            - --log-level=$(LOG_LEVEL)
+          env:
+            {{- include "ccdt.commonEnv" . | nindent 12 }}
+            - name:  EBPF_RING_BUFFER_SIZE_MB
+              value: {{ .Values.layer1.ringBufferSizeMb | quote }}
+            - name:  EBPF_PERF_BUFFER_PAGES
+              value: {{ .Values.layer1.perfBufferPages | quote }}
+            - name:  ENABLED_PROBES
+              value: {{ .Values.layer1.enabledProbes | quote }}
+            - name:  SCHED_LATENCY_THRESHOLD_US
+              value: {{ .Values.layer1.schedLatencyThresholdUs | quote }}
+          ports:
+            - name:          metrics
+              containerPort: 9100
+              protocol:      TCP
+          volumeMounts:
+            - { name: sys,      mountPath: /sys }
+            - { name: proc,     mountPath: /proc,     readOnly: true }
+            - { name: cri-sock, mountPath: /run/containerd/containerd.sock, readOnly: true }
+            - { name: bpf-maps, mountPath: /sys/fs/bpf }
+            - { name: lib-modules, mountPath: /lib/modules, readOnly: true }
+          livenessProbe:
+            httpGet: { path: /health, port: 9100 }
+            initialDelaySeconds: 30
+            periodSeconds:       20
+            failureThreshold:    3
+          readinessProbe:
+            httpGet: { path: /ready, port: 9100 }
+            initialDelaySeconds: 15
+            periodSeconds:       10
+          resources:
+            {{- toYaml .Values.layer1.resources | nindent 12 }}
+
+      volumes:
+        - name: sys
+          hostPath: { path: /sys, type: Directory }
+        - name: proc
+          hostPath: { path: /proc, type: Directory }
+        - name: cri-sock
+          hostPath: { path: /run/containerd/containerd.sock, type: Socket }
+        - name: bpf-maps
+          hostPath: { path: /sys/fs/bpf, type: DirectoryOrCreate }
+        - name: lib-modules
+          hostPath: { path: /lib/modules, type: Directory }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: layer1-nervous
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer1-nervous" .) | nindent 4 }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "9100"
+spec:
+  clusterIP: None
+  selector:
+    {{- include "ccdt.componentSelectorLabels" (list "layer1-nervous" .) | nindent 4 }}
+  ports:
+    - name: metrics
+      port: 9100
+      protocol: TCP
+      targetPort: metrics
+{{- end }}

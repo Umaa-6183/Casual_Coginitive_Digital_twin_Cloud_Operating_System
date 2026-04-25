@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ccdt.io/schemas/gnn_inference.schema.json",
+  "title": "CCDTGnnInferenceResult",
+  "description": "CCDT Layer-2 GNN inference result published to Kafka topic ccdt.gnn.inference. Contains graph classification, root cause identification, causal chain, blast radius, and counterfactuals.",
+  "type": "object",
+
+  "required": ["inference_id", "timestamp", "incident_type", "graph_confidence", "schema_ver"],
+
+  "properties": {
+    "inference_id":    { "type": "string", "format": "uuid" },
+    "timestamp":       { "type": "string", "format": "date-time" },
+    "incident_type": {
+      "type": "string",
+      "enum": ["UNKNOWN", "NONE", "FAULT", "ATTACK", "FAULT_ATTACK", "PERFORMANCE", "RESOURCE"]
+    },
+    "graph_confidence":       { "type": "number", "minimum": 0, "maximum": 1 },
+    "root_cause_node_id":     { "type": "string" },
+    "root_cause_node_name":   { "type": "string" },
+    "root_cause_confidence":  { "type": "number", "minimum": 0, "maximum": 1 },
+    "blast_radius_node_ids":  { "type": "array", "items": { "type": "string" } },
+    "blast_radius_count":     { "type": "integer", "minimum": 0 },
+    "inference_latency_ms":   { "type": "number", "minimum": 0 },
+    "node_count":             { "type": "integer", "minimum": 0 },
+    "edge_count":             { "type": "integer", "minimum": 0 },
+    "is_heartbeat":           { "type": "boolean" },
+    "schema_ver":             { "type": "string", "const": "1.0" },
+
+    "causal_chain": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/CausalChainNode" }
+    },
+    "node_classifications": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/TopologyNode" }
+    },
+    "top_features": {
+      "type": "array",
+      "maxItems": 10,
+      "items": { "$ref": "#/$defs/TopFeature" }
+    },
+    "counterfactuals": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/CounterfactualResult" }
+    }
+  },
+
+  "$defs": {
+    "NodeFeatures": {
+      "type": "object",
+      "properties": {
+        "cpu_utilization":       { "type": "number", "minimum": 0, "maximum": 1 },
+        "memory_utilization":    { "type": "number", "minimum": 0, "maximum": 1 },
+        "net_rx_bytes_rate":     { "type": "number", "minimum": 0 },
+        "net_tx_bytes_rate":     { "type": "number", "minimum": 0 },
+        "disk_read_rate":        { "type": "number", "minimum": 0 },
+        "disk_write_rate":       { "type": "number", "minimum": 0 },
+        "restart_count":         { "type": "number", "minimum": 0 },
+        "ready_replicas_ratio":  { "type": "number", "minimum": 0, "maximum": 1 },
+        "pod_age_seconds":       { "type": "number", "minimum": 0 },
+        "capability_event_rate": { "type": "number", "minimum": 0 },
+        "oom_kill_rate":         { "type": "number", "minimum": 0 },
+        "tcp_retransmit_rate":   { "type": "number", "minimum": 0 },
+        "sched_latency_p99_us":  { "type": "number", "minimum": 0 },
+        "sensitive_file_rate":   { "type": "number", "minimum": 0 },
+        "syscall_anomaly_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "execve_rate":           { "type": "number", "minimum": 0 }
+      }
+    },
+
+    "TopologyNode": {
+      "type": "object",
+      "required": ["node_id", "name"],
+      "properties": {
+        "node_id":          { "type": "string" },
+        "name":             { "type": "string" },
+        "node_type":        { "type": "string", "enum": ["SERVICE","POD","DATABASE","CACHE","QUEUE","INGRESS","EXTERNAL","NODE"] },
+        "namespace":        { "type": "string" },
+        "pod_name":         { "type": "string" },
+        "deployment":       { "type": "string" },
+        "node_name":        { "type": "string" },
+        "pod_ips":          { "type": "array", "items": { "type": "string" } },
+        "node_class":       { "type": "string", "enum": ["UNKNOWN","HEALTHY","FAULT","ATTACK"] },
+        "class_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "features":         { "$ref": "#/$defs/NodeFeatures" },
+        "is_root_cause":    { "type": "boolean" },
+        "is_isolated":      { "type": "boolean" },
+        "labels":           { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+
+    "CausalChainNode": {
+      "type": "object",
+      "required": ["node_id", "node_name"],
+      "properties": {
+        "node_id":          { "type": "string" },
+        "node_name":        { "type": "string" },
+        "node_class":       { "type": "string" },
+        "causal_score":     { "type": "number", "minimum": 0, "maximum": 1 },
+        "do_calculus_prob": { "type": "number", "minimum": 0, "maximum": 1 },
+        "explanation":      { "type": "string" },
+        "depth":            { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "TopFeature": {
+      "type": "object",
+      "required": ["feature_name", "node_name"],
+      "properties": {
+        "feature_name": { "type": "string" },
+        "node_name":    { "type": "string" },
+        "importance":   { "type": "number", "minimum": 0, "maximum": 1 },
+        "value":        { "type": "number" },
+        "threshold":    { "type": "number" },
+        "explanation":  { "type": "string" }
+      }
+    },
+
+    "CounterfactualResult": {
+      "type": "object",
+      "required": ["node_id", "node_name"],
+      "properties": {
+        "node_id":                  { "type": "string" },
+        "node_name":                { "type": "string" },
+        "incident_prob_if_healthy": { "type": "number", "minimum": 0, "maximum": 1 },
+        "incident_prob_actual":     { "type": "number", "minimum": 0, "maximum": 1 },
+        "causal_effect":            { "type": "number" },
+        "explanation":              { "type": "string" }
+      }
+    }
+  }
+}

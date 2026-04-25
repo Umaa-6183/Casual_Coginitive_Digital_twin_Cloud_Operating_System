@@ -1,0 +1,412 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT Helm Chart — values.yaml
+# ═══════════════════════════════════════════════════════════════════════════════
+# Override any value with:
+#   helm upgrade --install ccdt ./infra/helm/ccdt \
+#     --namespace ccdt --create-namespace \
+#     --set global.imageTag=v1.2.3 \
+#     --set layer4.anthropicApiKey=sk-ant-...
+#
+# Or supply a custom values file:
+#   helm upgrade --install ccdt ./infra/helm/ccdt \
+#     -f infra/helm/ccdt/values-prod.yaml
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Global ─────────────────────────────────────────────────────────────────────
+global:
+  # Container image registry prefix — set to your ECR/GHCR URL
+  # e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/ccdt-prod
+  imageRegistry: "ghcr.io/your-org/ccdt"
+  imageTag:       "1.0.0"
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+  # Target namespace (must match --namespace flag)
+  namespace: ccdt
+
+  # Log level for all services
+  logLevel: info
+
+  # Kafka bootstrap address (cluster-internal DNS or external broker)
+  kafkaBootstrap: "ccdt-kafka:9092"
+
+  # Base domain for Ingress hosts
+  domain: "ccdt.example.com"
+
+  # AWS region (used for ECR auth helper annotation)
+  awsRegion: "us-east-1"
+
+  # Common labels added to every resource
+  commonLabels: {}
+
+  # Common annotations added to every resource
+  commonAnnotations: {}
+
+# ── Layer 1 — eBPF Nervous System ──────────────────────────────────────────────
+layer1:
+  enabled: true
+  image:
+    repository: layer1-nervous
+    tag: ""            # falls back to global.imageTag
+  # DaemonSet — runs on ALL nodes; no replica count
+  resources:
+    requests:
+      cpu:    "100m"
+      memory: "128Mi"
+    limits:
+      cpu:    "500m"
+      memory: "512Mi"
+  # eBPF probe configuration
+  enabledProbes: "capability,oom,tcp_retransmit,sched_latency,file_access,execve"
+  ringBufferSizeMb: "64"
+  perfBufferPages:  "512"
+  schedLatencyThresholdUs: "5000"
+  kafkaBatchSize:   "500"
+  kafkaLingerMs:    "50"
+  # Host mounts — required for eBPF
+  hostPID: true
+  hostNetwork: true
+  # Node selector: only Linux nodes
+  nodeSelector:
+    kubernetes.io/os: linux
+  tolerations:
+    - operator: Exists
+  updateStrategy:
+    type: RollingUpdate
+    maxUnavailable: 1
+  serviceMonitor:
+    enabled: true
+    interval: 10s
+
+# ── Layer 2 — Cognitive Core (Causal GNN) ──────────────────────────────────────
+layer2:
+  enabled: true
+  image:
+    repository: layer2-cognitive
+    tag: ""
+  replicas: 2
+  resources:
+    requests:
+      cpu:    "1000m"
+      memory: "2Gi"
+    limits:
+      cpu:    "4000m"
+      memory: "8Gi"
+  env:
+    inferIntervalS:        "5"
+    inferenceCacheTtlS:    "2"
+    ompNumThreads:         "4"
+  # Model checkpoint PVC
+  modelPvc:
+    enabled:          true
+    storageClass:     "standard"
+    size:             "5Gi"
+    accessMode:       ReadOnlyMany
+    existingClaim:    ""   # set to reuse an existing PVC
+  hpa:
+    enabled:    true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 65
+    targetMemoryUtilizationPercentage: 70
+  pdb:
+    enabled:      true
+    minAvailable: 1
+  affinity:
+    podAntiAffinity: true
+  serviceMonitor:
+    enabled:  true
+    interval: 15s
+
+# ── Layer 3 — Guardian (RL + OPA) ──────────────────────────────────────────────
+layer3:
+  enabled: true
+  image:
+    repository: layer3-guardian
+    tag: ""
+  replicas: 1          # singleton — action serialization via internal queue
+  resources:
+    requests:
+      cpu:    "500m"
+      memory: "1Gi"
+    limits:
+      cpu:    "2000m"
+      memory: "4Gi"
+  env:
+    autonomyMode:         "supervised"   # supervised | human-in-loop | full-auto
+    inferPollS:           "5"
+    ghostRiskThreshold:   "0.35"
+    ghostConfidenceMin:   "0.70"
+    opaFallbackLocal:     "true"
+  # OPA sidecar
+  opa:
+    enabled: true
+    image:   "openpolicyagent/opa:0.65.0-rootless"
+    resources:
+      requests:
+        cpu:    "100m"
+        memory: "128Mi"
+      limits:
+        cpu:    "500m"
+        memory: "512Mi"
+    logLevel: info
+  # RL model checkpoint PVC
+  modelPvc:
+    enabled:       true
+    storageClass:  "standard"
+    size:          "2Gi"
+    accessMode:    ReadOnlyMany
+    existingClaim: ""
+  # Recreate strategy — only one Guardian at a time
+  strategy:
+    type: Recreate
+  pdb:
+    enabled:      true
+    minAvailable: 0
+  serviceMonitor:
+    enabled:  true
+    interval: 15s
+
+# ── Layer 4 — Co-Pilot (Claude AI) ─────────────────────────────────────────────
+layer4:
+  enabled: true
+  image:
+    repository: layer4-copilot
+    tag: ""
+  replicas: 2
+  resources:
+    requests:
+      cpu:    "250m"
+      memory: "512Mi"
+    limits:
+      cpu:    "2000m"
+      memory: "2Gi"
+  env:
+    claudeModel:             "claude-sonnet-4-20250514"
+    maxTokens:               "2048"
+    maxHistoryTurns:         "20"
+    autoReportConfidence:    "0.85"
+    contextFetchTimeoutS:    "3.0"
+  # Anthropic API key — set via --set or external secret
+  anthropicApiKey: ""        # ← set via: --set layer4.anthropicApiKey=sk-ant-...
+  # Use existingSecret instead of inline key (recommended for prod)
+  existingSecret:
+    name: ""                 # e.g. "ccdt-anthropic-secret"
+    key:  "api-key"
+  hpa:
+    enabled:     true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 75
+  pdb:
+    enabled:      true
+    minAvailable: 1
+  affinity:
+    podAntiAffinity: true
+  serviceMonitor:
+    enabled:  true
+    interval: 15s
+
+# ── API Gateway ────────────────────────────────────────────────────────────────
+apiGateway:
+  enabled: true
+  image:
+    repository: api-gateway
+    tag: ""
+  replicas: 2
+  resources:
+    requests:
+      cpu:    "200m"
+      memory: "256Mi"
+    limits:
+      cpu:    "1000m"
+      memory: "1Gi"
+  env:
+    authDisabled:  "false"
+    rateLimit:     "1000"    # requests/minute per JWT subject
+    corsOrigins:   "*"
+  service:
+    type: ClusterIP
+    port: 8000
+  ingress:
+    enabled:      true
+    className:    nginx
+    host:         ""         # defaults to "api.{{ global.domain }}"
+    tls:          true
+    certIssuer:   "letsencrypt-prod"   # cert-manager cluster issuer
+    annotations: {}
+  hpa:
+    enabled:     true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    enabled:      true
+    minAvailable: 1
+  serviceMonitor:
+    enabled:  true
+    interval: 15s
+
+# ── Dashboard (React Frontend) ─────────────────────────────────────────────────
+dashboard:
+  enabled: true
+  image:
+    repository: dashboard
+    tag: ""
+  replicas: 2
+  resources:
+    requests:
+      cpu:    "50m"
+      memory: "128Mi"
+    limits:
+      cpu:    "500m"
+      memory: "512Mi"
+  service:
+    type: ClusterIP
+    port: 3000
+  ingress:
+    enabled:    true
+    className:  nginx
+    host:       ""           # defaults to "{{ global.domain }}"
+    tls:        true
+    certIssuer: "letsencrypt-prod"
+    annotations: {}
+  hpa:
+    enabled:     true
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+  pdb:
+    enabled:      true
+    minAvailable: 1
+
+# ── Kafka (Bitnami dependency) ─────────────────────────────────────────────────
+kafka:
+  enabled: true
+  replicaCount: 3
+  kraft:
+    enabled: true
+  controller:
+    replicaCount: 3
+    resources:
+      requests:
+        cpu:    "500m"
+        memory: "1Gi"
+      limits:
+        cpu:    "2000m"
+        memory: "2Gi"
+  persistence:
+    enabled:      true
+    storageClass: "standard"
+    size:         "20Gi"
+  extraConfig: |
+    auto.create.topics.enable=false
+    log.retention.hours=168
+    log.segment.bytes=1073741824
+    num.partitions=3
+    default.replication.factor=3
+    min.insync.replicas=2
+  provisioning:
+    enabled: true
+    topics:
+      - name:              ccdt.ebpf.events
+        partitions:        12
+        replicationFactor: 3
+        config:
+          retention.ms:    "86400000"
+          compression.type: lz4
+          max.message.bytes: "65536"
+      - name:              ccdt.gnn.inference
+        partitions:        3
+        replicationFactor: 3
+        config:
+          retention.ms:    "604800000"
+          compression.type: gzip
+      - name:              ccdt.guardian.actions
+        partitions:        6
+        replicationFactor: 3
+        config:
+          retention.ms:    "2592000000"
+          compression.type: gzip
+      - name:              ccdt.incidents
+        partitions:        3
+        replicationFactor: 3
+        config:
+          cleanup.policy:  "compact,delete"
+          retention.ms:    "7776000000"
+          compression.type: gzip
+
+# ── Redis (Bitnami dependency) ─────────────────────────────────────────────────
+redis:
+  enabled: true
+  architecture: replication
+  auth:
+    enabled: true
+    existingSecret:     ""
+    existingSecretPasswordKey: ""
+  master:
+    resources:
+      requests:
+        cpu:    "100m"
+        memory: "128Mi"
+      limits:
+        cpu:    "500m"
+        memory: "512Mi"
+    persistence:
+      enabled:      true
+      storageClass: "standard"
+      size:         "2Gi"
+  replica:
+    replicaCount: 1
+    resources:
+      requests:
+        cpu:    "100m"
+        memory: "128Mi"
+      limits:
+        cpu:    "250m"
+        memory: "256Mi"
+
+# ── Monitoring ────────────────────────────────────────────────────────────────
+monitoring:
+  # Set true to deploy kube-prometheus-stack as a subchart dependency.
+  # Set false if you manage Prometheus/Grafana separately.
+  prometheus:
+    enabled: false
+  # ServiceMonitor CRDs — set true when using any Prometheus Operator
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    labels:
+      release: prometheus
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+secrets:
+  # Anthropic API key — referenced by Layer 4.
+  # Use layer4.existingSecret for production (Vault/External Secrets Operator).
+  anthropicApiKey: ""
+
+  # JWT secret for API Gateway auth.
+  jwtSecret: ""
+
+  # Kafka SASL credentials (leave empty if using no auth in cluster).
+  kafkaUsername: ""
+  kafkaPassword: ""
+
+# ── Network Policies ──────────────────────────────────────────────────────────
+networkPolicy:
+  enabled: true          # set false for debugging only
+
+# ── Pod Security Context (applied to all non-privileged pods) ──────────────────
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser:    1000
+  runAsGroup:   1000
+  fsGroup:      1000
+
+# ── Container Security Context ─────────────────────────────────────────────────
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem:   true
+  capabilities:
+    drop: [ALL]

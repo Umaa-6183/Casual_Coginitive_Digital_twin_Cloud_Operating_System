@@ -1,0 +1,163 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT — Kubernetes Namespace + ResourceQuota + LimitRange + NetworkPolicy
+# ═══════════════════════════════════════════════════════════════════════════════
+# Apply:  kubectl apply -f namespace.yaml
+# ═══════════════════════════════════════════════════════════════════════════════
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ccdt
+  labels:
+    app.kubernetes.io/name:    ccdt
+    app.kubernetes.io/part-of: ccdt-platform
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit:   restricted
+    pod-security.kubernetes.io/warn:    restricted
+  annotations:
+    description: "CCDT — Cognitive Cloud Digital Twin AIOps Platform"
+    team:        "platform-engineering"
+
+---
+# ── Resource quota — prevents runaway resource consumption ──────────────────
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ccdt-quota
+  namespace: ccdt
+spec:
+  hard:
+    # Compute
+    requests.cpu:    "32"
+    requests.memory: "64Gi"
+    limits.cpu:      "64"
+    limits.memory:   "128Gi"
+    # Storage
+    requests.storage:           "500Gi"
+    persistentvolumeclaims:     "20"
+    # Objects
+    pods:                       "100"
+    services:                   "30"
+    secrets:                    "60"
+    configmaps:                 "40"
+    replicationcontrollers:     "0"    # use Deployments/DaemonSets only
+    count/deployments.apps:     "20"
+    count/daemonsets.apps:      "5"
+    count/statefulsets.apps:    "5"
+    count/horizontalpodautoscalers.autoscaling: "10"
+
+---
+# ── LimitRange — default requests/limits for containers without explicit values
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ccdt-limitrange
+  namespace: ccdt
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu:    "500m"
+        memory: "512Mi"
+      defaultRequest:
+        cpu:    "100m"
+        memory: "128Mi"
+      max:
+        cpu:    "8"
+        memory: "16Gi"
+      min:
+        cpu:    "10m"
+        memory: "32Mi"
+    - type: Pod
+      max:
+        cpu:    "16"
+        memory: "32Gi"
+    - type: PersistentVolumeClaim
+      max:
+        storage: "100Gi"
+      min:
+        storage: "1Gi"
+
+---
+# ── Default-deny ingress NetworkPolicy (zero-trust baseline) ─────────────────
+# All inter-service traffic must be explicitly allowed below.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: ccdt
+spec:
+  podSelector: {}      # applies to ALL pods in namespace
+  policyTypes:
+    - Ingress
+
+---
+# ── Allow ccdt-internal traffic on port 8000–9200 ────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-intra-namespace
+  namespace: ccdt
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ccdt
+      ports:
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8001
+        - protocol: TCP
+          port: 8002
+        - protocol: TCP
+          port: 8003
+        - protocol: TCP
+          port: 9090    # Prometheus scrape
+        - protocol: TCP
+          port: 9100    # Layer-1 metrics
+
+---
+# ── Allow Prometheus scraping from monitoring namespace ──────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: ccdt
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+        - protocol: TCP
+          port: 9100
+        - protocol: TCP
+          port: 8001
+        - protocol: TCP
+          port: 8002
+        - protocol: TCP
+          port: 8003
+
+---
+# ── Monitoring namespace ──────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/name: monitoring
+    pod-security.kubernetes.io/enforce: baseline

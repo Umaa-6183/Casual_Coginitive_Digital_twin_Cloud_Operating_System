@@ -1,0 +1,5 @@
+FROM python:3.11-slim
+RUN pip install --no-cache-dir httpx asyncpg redis aiokafka
+WORKDIR /app
+COPY traffic-gen.py .
+CMD ["python", "traffic-gen.py"]

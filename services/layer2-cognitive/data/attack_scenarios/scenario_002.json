@@ -1,0 +1,96 @@
+{
+  "scenario_id": "attack_002",
+  "description": "Container escape via /var/run/docker.sock access + pivot_root syscall",
+  "nodes": [
+    {
+      "id": "auth-svc",
+      "label": "Auth Service",
+      "status": "critical",
+      "layer": "service",
+      "cpu": 88,
+      "mem": 74,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 4,
+      "sched_latency_p99_ms": 12,
+      "cap_event": 1,
+      "file_event": 1,
+      "degree": 2,
+      "node_label": 2
+    },
+    {
+      "id": "api-gw",
+      "label": "API Gateway",
+      "status": "warning",
+      "layer": "network",
+      "cpu": 55,
+      "mem": 62,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 8,
+      "sched_latency_p99_ms": 14,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 3,
+      "node_label": 0
+    },
+    {
+      "id": "order-svc",
+      "label": "Order Service",
+      "status": "healthy",
+      "layer": "service",
+      "cpu": 42,
+      "mem": 58,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 0,
+      "sched_latency_p99_ms": 8,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 2,
+      "node_label": 0
+    },
+    {
+      "id": "postgres",
+      "label": "PostgreSQL",
+      "status": "healthy",
+      "layer": "data",
+      "cpu": 35,
+      "mem": 62,
+      "restarts": 0,
+      "oom_kills": 0,
+      "tcp_retransmit_rate": 0,
+      "sched_latency_p99_ms": 4,
+      "cap_event": 0,
+      "file_event": 0,
+      "degree": 2,
+      "node_label": 0
+    }
+  ],
+  "edges": [
+    {
+      "from": "api-gw",
+      "to": "auth-svc",
+      "latency_ms": 28,
+      "error_rate": 0.022,
+      "request_rate": 320,
+      "causal": true
+    },
+    {
+      "from": "api-gw",
+      "to": "order-svc",
+      "latency_ms": 8,
+      "error_rate": 0.001,
+      "request_rate": 200,
+      "causal": false
+    },
+    {
+      "from": "order-svc",
+      "to": "postgres",
+      "latency_ms": 5,
+      "error_rate": 0.0,
+      "request_rate": 80,
+      "causal": false
+    }
+  ]
+}

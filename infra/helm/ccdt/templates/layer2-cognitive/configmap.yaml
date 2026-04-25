@@ -1,0 +1,43 @@
+{{- if .Values.layer2.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: layer2-cognitive-config
+  namespace: {{ include "ccdt.namespace" . }}
+  labels:
+    {{- include "ccdt.componentLabels" (list "layer2-cognitive" .) | nindent 4 }}
+data:
+  model-config.yaml: |
+    model:
+      hidden_dim:     128
+      num_layers:     4
+      heads:          8
+      node_feat_dim:  16
+      edge_feat_dim:  4
+      num_classes:    3
+      dropout:        0.1
+    inference:
+      interval_s:    {{ .Values.layer2.env.inferIntervalS }}
+      cache_ttl_s:   {{ .Values.layer2.env.inferenceCacheTtlS }}
+      confidence_min: 0.65
+      device: cpu
+    kafka:
+      input_topic:    ccdt.ebpf.events
+      output_topic:   ccdt.gnn.inference
+      consumer_group: ccdt-gnn-dag-builder
+      batch_size:     500
+    topology:
+      max_nodes: 50
+      seed_services:
+        - api-gw
+        - auth-svc
+        - order-svc
+        - payment-svc
+        - inventory-svc
+        - postgres
+        - redis
+        - kafka
+        - monitoring
+  log-level: {{ .Values.global.logLevel }}
+{{- end }}

@@ -1,0 +1,43 @@
+# CCDT Layer-4 Co-Pilot — Python Dependencies
+# Install: pip install -r requirements.txt
+# Python:  3.11+
+
+# ── Google Generative AI API ───────────────────────────────────────────────────────
+google-genai>=1.0.0               # Claude claude-sonnet-4 streaming + tool use
+
+# ── FastAPI server ─────────────────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+annotated-types==0.6.0
+pydantic==2.7.4
+pydantic-core==2.18.4
+pydantic-settings==2.3.4
+sse-starlette==2.1.0                # Server-Sent Events for streaming
+click==8.1.7
+h11==0.14.0
+# ── HTTP client ────────────────────────────────────────────────────────────────
+httpx==0.27.0                       # async HTTP (primary)
+aiohttp==3.9.5                      # async HTTP (legacy compat)
+
+# ── Kafka (consume inference events) ──────────────────────────────────────────
+aiokafka==0.11.0
+
+# ── Fine-tuning pipeline ───────────────────────────────────────────────────────
+datasets==2.20.0                    # HuggingFace datasets
+torch==2.3.0                        # PEFT / LoRA base
+transformers==4.43.0
+peft==0.12.0                        # LoRA adapters
+trl==0.9.6                          # SFTTrainer
+bitsandbytes==0.42.0              # 4-bit quantisation (QLoRA)
+accelerate==0.31.0                  # distributed / GPU training
+
+# ── Observability ─────────────────────────────────────────────────────────────
+prometheus-client==0.20.0
+structlog==24.2.0
+
+# ── Serialisation / storage ────────────────────────────────────────────────────
+orjson==3.10.3
+python-dotenv==1.0.1
+PyYAML==6.0.1
+jinja2==3.1.4                       # prompt template rendering
+google-generativeai>=0.7.0

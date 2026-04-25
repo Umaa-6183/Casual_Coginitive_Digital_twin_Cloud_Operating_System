@@ -1,0 +1,434 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT Layer-3 Guardian — OPA Policy ConfigMap
+# ═══════════════════════════════════════════════════════════════════════════════
+# Bundles all 5 Rego policies into a ConfigMap mounted into the OPA sidecar.
+# The OPA process loads /policies/*.rego on startup.
+#
+# Source of truth: ccdt/services/layer3-guardian/opa/policies/
+# This ConfigMap is generated from those files — keep in sync.
+#
+# To regenerate after policy changes:
+#   kubectl create configmap layer3-opa-policies \
+#     --from-file=ccdt/services/layer3-guardian/opa/policies/ \
+#     --dry-run=client -o yaml -n ccdt > opa-configmap.yaml
+# ═══════════════════════════════════════════════════════════════════════════════
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: layer3-opa-policies
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:      layer3-guardian
+    app.kubernetes.io/component: opa-policies
+    app.kubernetes.io/part-of:   ccdt-platform
+  annotations:
+    description: "OPA Rego policies for CCDT Guardian remediation gate"
+    policy-version: "1.0.0"
+    last-updated:   "2024-03-15"
+
+data:
+  # ── Policy 1: No Privilege Escalation ──────────────────────────────────────
+  no_privilege_escalation.rego: |
+    package ccdt.guardian.policies.no_privilege_escalation
+
+    import rego.v1
+
+    dangerous_capabilities := {
+        "CAP_SYS_ADMIN", "CAP_SYS_PTRACE", "CAP_SYS_MODULE",
+        "CAP_SYS_RAWIO", "CAP_SYS_BOOT", "CAP_NET_ADMIN",
+        "CAP_SETUID", "CAP_SETGID", "CAP_DAC_OVERRIDE",
+    }
+
+    always_blocked_actions := {
+        "grant_privileged_mode", "add_capability",
+        "modify_security_context", "run_as_root",
+    }
+
+    default allow := false
+
+    allow if {
+        not action_always_blocked
+        not requests_dangerous_capability
+        not escalates_to_root
+        not modifies_pod_security_policy
+    }
+
+    violations contains msg if {
+        action_always_blocked
+        msg := sprintf("Action '%v' is unconditionally blocked by no_privilege_escalation policy",
+                       [input.action.name])
+    }
+    violations contains msg if {
+        requests_dangerous_capability
+        cap := input.action.parameters.capability
+        msg := sprintf("Action '%v' requests dangerous capability '%v' which is not permitted",
+                       [input.action.name, cap])
+    }
+    violations contains msg if {
+        escalates_to_root
+        msg := sprintf("Action '%v' would run container as uid=0 (root) which is not permitted",
+                       [input.action.name])
+    }
+    violations contains msg if {
+        modifies_pod_security_policy
+        msg := sprintf("Action '%v' attempts to modify PodSecurityPolicy — requires human approval",
+                       [input.action.name])
+    }
+
+    action_always_blocked     if { input.action.name in always_blocked_actions }
+    requests_dangerous_capability if {
+        cap := input.action.parameters.capability
+        cap in dangerous_capabilities
+    }
+    escalates_to_root         if { input.action.parameters.run_as_user == 0 }
+    escalates_to_root         if { input.action.parameters.privileged == true }
+    modifies_pod_security_policy if { input.action.parameters.modify_psp == true }
+
+    audit := {
+        "policy":      "no_privilege_escalation",
+        "action":      input.action.name,
+        "target_node": input.action.target_node,
+        "result":      allow,
+        "violations":  violations,
+        "timestamp":   time.now_ns(),
+    }
+
+  # ── Policy 2: CPU Threshold ─────────────────────────────────────────────────
+  cpu_threshold.rego: |
+    package ccdt.guardian.policies.cpu_threshold
+
+    import rego.v1
+
+    MIN_CPU_PCT_THRESHOLD := 20
+    THROTTLE_MIN_CPU_PCT  := 30
+    CPU_FLOOR_CORES       := 0.1
+    protected_layers      := {"data", "system"}
+
+    default allow := false
+
+    allow if {
+        not scale_down_below_threshold
+        not throttle_underloaded
+        not throttle_protected_layer
+        not throttle_below_floor
+        not drain_last_system_node
+    }
+
+    violations contains msg if {
+        scale_down_below_threshold
+        cpu := input.node.cpu
+        msg := sprintf("scale_down_replicas blocked: CPU %.0f%% is below %v%% threshold",
+                       [cpu, MIN_CPU_PCT_THRESHOLD])
+    }
+    violations contains msg if {
+        throttle_underloaded
+        cpu := input.node.cpu
+        msg := sprintf("throttle_cpu blocked: CPU %.0f%% already below throttle minimum %v%%",
+                       [cpu, THROTTLE_MIN_CPU_PCT])
+    }
+    violations contains msg if {
+        throttle_protected_layer
+        layer := input.node.layer
+        msg := sprintf("throttle_cpu blocked: '%v' layer nodes must not be CPU-throttled", [layer])
+    }
+    violations contains msg if {
+        throttle_below_floor
+        requested := input.action.parameters.cpu_limit_cores
+        msg := sprintf("throttle_cpu: requested %.2f cores is below floor %.2f cores",
+                       [requested, CPU_FLOOR_CORES])
+    }
+    violations contains msg if {
+        drain_last_system_node
+        msg := sprintf("drain_node blocked: '%v' is the last running system-layer node",
+                       [input.action.target_node])
+    }
+
+    scale_down_below_threshold if {
+        input.action.name == "scale_down_replicas"
+        input.node.cpu < MIN_CPU_PCT_THRESHOLD
+    }
+    throttle_underloaded if {
+        input.action.name == "throttle_cpu"
+        input.node.cpu < THROTTLE_MIN_CPU_PCT
+    }
+    throttle_protected_layer if {
+        input.action.name == "throttle_cpu"
+        input.node.layer in protected_layers
+    }
+    throttle_below_floor if {
+        input.action.name == "throttle_cpu"
+        input.action.parameters.cpu_limit_cores < CPU_FLOOR_CORES
+    }
+    drain_last_system_node if {
+        input.action.name in {"drain_node", "cordon_node"}
+        input.node.layer == "system"
+        count([n | n := input.cluster.nodes[_]; n.layer == "system"; n.status != "drained"]) == 1
+    }
+
+    audit := {
+        "policy":      "cpu_threshold",
+        "action":      input.action.name,
+        "target_node": input.action.target_node,
+        "node_cpu":    input.node.cpu,
+        "result":      allow,
+        "violations":  violations,
+    }
+
+  # ── Policy 3: Egress Control ────────────────────────────────────────────────
+  egress_control.rego: |
+    package ccdt.guardian.policies.egress_control
+
+    import rego.v1
+
+    approved_namespaces := {
+        "production", "prod", "staging", "default",
+        "kube-system", "monitoring", "ccdt",
+    }
+    blocked_cidrs         := {"0.0.0.0/0", "::/0", "0.0.0.0", "::"}
+    egress_affecting_actions := {"apply_network_policy", "isolate_container"}
+
+    default allow := false
+
+    allow if {
+        not unapproved_namespace
+        not opens_internet_egress
+        not non_rfc1918_without_exemption
+        not full_auto_network_change
+    }
+
+    violations contains msg if {
+        unapproved_namespace
+        ns := input.cluster.namespace
+        msg := sprintf("egress_control: namespace '%v' not in approved list", [ns])
+    }
+    violations contains msg if {
+        opens_internet_egress
+        some rule in input.action.parameters.egress_rules
+        rule.cidr in blocked_cidrs
+        msg := sprintf("egress_control: CIDR '%v' opens unrestricted internet access — blocked",
+                       [rule.cidr])
+    }
+    violations contains msg if {
+        non_rfc1918_without_exemption
+        msg := "egress_control: non-RFC-1918 address without explicit exemption"
+    }
+    violations contains msg if {
+        full_auto_network_change
+        msg := sprintf("egress_control: network policy changes not permitted in full-auto mode '%v'",
+                       [input.context.autonomy_mode])
+    }
+
+    private_cidr_prefixes := {
+        "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
+        "192.168.",
+    }
+
+    unapproved_namespace if {
+        input.action.name in egress_affecting_actions
+        not input.cluster.namespace in approved_namespaces
+    }
+    opens_internet_egress if {
+        input.action.name == "apply_network_policy"
+        some rule in input.action.parameters.egress_rules
+        rule.cidr in blocked_cidrs
+    }
+    non_rfc1918_without_exemption if {
+        input.action.name == "apply_network_policy"
+        some rule in input.action.parameters.egress_rules
+        not is_private_cidr(rule.cidr)
+        not rule.exempted == true
+    }
+    full_auto_network_change if {
+        input.action.name in egress_affecting_actions
+        input.context.autonomy_mode == "full-auto"
+    }
+    is_private_cidr(cidr) if {
+        some prefix in private_cidr_prefixes
+        startswith(cidr, prefix)
+    }
+
+    audit := {
+        "policy":        "egress_control",
+        "action":        input.action.name,
+        "target_node":   input.action.target_node,
+        "namespace":     input.cluster.namespace,
+        "autonomy_mode": input.context.autonomy_mode,
+        "result":        allow,
+        "violations":    violations,
+    }
+
+  # ── Policy 4: Lateral Movement ──────────────────────────────────────────────
+  lateral_movement.rego: |
+    package ccdt.guardian.policies.lateral_movement
+
+    import rego.v1
+
+    MAX_RETRY_COUNT      := 3
+    RETRY_WINDOW_MINUTES := 10
+
+    requires_isolation_first := {
+        "restart_pod", "rollback_deployment",
+        "scale_up_replicas", "enable_debug_logging",
+    }
+
+    default allow := false
+
+    allow if {
+        not rollback_attack_node
+        not restart_unisolated_attack_node
+        not cross_namespace_privilege_creep
+        not rbac_insufficient
+        not action_retry_loop
+    }
+
+    violations contains msg if {
+        rollback_attack_node
+        msg := sprintf("lateral_movement: rollback on attack node '%v' blocked — isolate first",
+                       [input.action.target_node])
+    }
+    violations contains msg if {
+        restart_unisolated_attack_node
+        msg := sprintf("lateral_movement: '%v' on attack node '%v' blocked — isolate first",
+                       [input.action.name, input.action.target_node])
+    }
+    violations contains msg if {
+        cross_namespace_privilege_creep
+        target_ns := input.action.parameters.target_namespace
+        msg := sprintf("lateral_movement: cross-namespace access to '%v' not permitted", [target_ns])
+    }
+    violations contains msg if {
+        action_retry_loop
+        msg := sprintf("lateral_movement: action '%v' attempted %v times — possible loop",
+                       [input.action.name, count_recent_same_actions])
+    }
+
+    rollback_attack_node if {
+        input.action.name == "rollback_deployment"
+        input.node.class  == "attack"
+    }
+    restart_unisolated_attack_node if {
+        input.action.name in requires_isolation_first
+        input.node.class  == "attack"
+        not input.node.is_isolated == true
+    }
+    cross_namespace_privilege_creep if {
+        input.action.parameters.target_namespace != null
+        input.action.parameters.target_namespace != input.cluster.namespace
+        not input.action.parameters.cross_namespace_approved == true
+    }
+    rbac_insufficient if {
+        input.context.rbac_subject  != null
+        input.context.can_write_ns  != null
+        not input.cluster.namespace in input.context.can_write_ns
+    }
+    action_retry_loop if { count_recent_same_actions > MAX_RETRY_COUNT }
+
+    count_recent_same_actions := count([h |
+        h := input.action.history[_]
+        h.action_name == input.action.name
+        h.target_node == input.action.target_node
+        h.age_minutes <= RETRY_WINDOW_MINUTES
+    ])
+
+    # Isolation itself is always allowed on attack nodes
+    allow if {
+        input.action.name == "isolate_container"
+        input.node.class  == "attack"
+    }
+
+    audit := {
+        "policy":       "lateral_movement",
+        "action":       input.action.name,
+        "target_node":  input.action.target_node,
+        "node_class":   input.node.class,
+        "is_isolated":  object.get(input.node, "is_isolated", false),
+        "result":       allow,
+        "violations":   violations,
+    }
+
+  # ── Policy 5: OOM Notification ──────────────────────────────────────────────
+  oom_notification.rego: |
+    package ccdt.guardian.policies.oom_notification
+
+    import rego.v1
+
+    MIN_OOM_KILLS_FOR_AUTO  := 1
+    CRITICAL_OOM_COUNT      := 5
+    NODE_MEM_MAX_PCT        := 90
+
+    stateful_workload_prefixes := {
+        "postgres", "mysql", "redis", "kafka",
+        "elasticsearch", "cassandra", "mongodb",
+    }
+
+    default allow := false
+
+    allow if {
+        input.action.name == "increase_oom_threshold"
+        input.node.oom_kills >= MIN_OOM_KILLS_FOR_AUTO
+        not is_stateful_workload
+        not mem_limit_exceeds_max
+        not critical_oom_storm
+    }
+
+    allow if {
+        not input.action.name in {"increase_oom_threshold", "restart_pod", "drain_node"}
+    }
+
+    allow if {
+        input.action.name in {"increase_oom_threshold", "restart_pod"}
+        is_stateful_workload
+        input.context.autonomy_mode in {"human-in-loop", "supervised"}
+        input.context.human_approved == true
+    }
+
+    violations contains msg if {
+        input.action.name == "increase_oom_threshold"
+        input.node.oom_kills < MIN_OOM_KILLS_FOR_AUTO
+        msg := sprintf("oom_notification: requires >= %v OOM kill(s); node has %v",
+                       [MIN_OOM_KILLS_FOR_AUTO, input.node.oom_kills])
+    }
+    violations contains msg if {
+        input.action.name == "increase_oom_threshold"
+        is_stateful_workload
+        not input.context.human_approved == true
+        msg := sprintf("oom_notification: stateful workload '%v' requires human approval",
+                       [input.action.target_node])
+    }
+    violations contains msg if {
+        mem_limit_exceeds_max
+        msg := "oom_notification: requested memory limit exceeds 90% of node capacity"
+    }
+    violations contains msg if {
+        critical_oom_storm
+        msg := sprintf("oom_notification: OOM storm (%v kills) — requires human review",
+                       [input.node.oom_kills])
+    }
+
+    notify_required   if { input.node.layer == "data"; input.node.oom_kills >= 1 }
+    notify_required   if { critical_oom_storm }
+    escalate_required if { critical_oom_storm }
+
+    is_stateful_workload if {
+        some prefix in stateful_workload_prefixes
+        startswith(input.action.target_node, prefix)
+    }
+    mem_limit_exceeds_max if {
+        input.action.name == "increase_oom_threshold"
+        input.action.parameters.new_mem_limit_gb != null
+        input.cluster.node_mem_total_gb != null
+        (input.action.parameters.new_mem_limit_gb / input.cluster.node_mem_total_gb) * 100 > NODE_MEM_MAX_PCT
+    }
+    critical_oom_storm if { input.node.oom_kills >= CRITICAL_OOM_COUNT }
+
+    audit := {
+        "policy":          "oom_notification",
+        "action":          input.action.name,
+        "target_node":     input.action.target_node,
+        "node_oom_kills":  object.get(input.node, "oom_kills", 0),
+        "is_stateful":     is_stateful_workload,
+        "notify_required": notify_required,
+        "result":          allow,
+        "violations":      violations,
+    }

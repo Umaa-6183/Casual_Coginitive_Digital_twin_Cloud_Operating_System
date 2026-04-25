@@ -1,0 +1,150 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT Layer-1 Nervous System — RBAC
+# ═══════════════════════════════════════════════════════════════════════════════
+# The eBPF collector runs as a DaemonSet on every node and needs:
+#   • Read access to Pods/Nodes/Namespaces (for pod metadata enrichment)
+#   • No write access (pure observer)
+#   • hostPID + hostNetwork + privileged container (required for eBPF)
+#   • SCC / PSA exception for privileged pod (cluster-scoped)
+# ═══════════════════════════════════════════════════════════════════════════════
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: layer1-nervous
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:      layer1-nervous
+    app.kubernetes.io/component: nervous-system
+    app.kubernetes.io/part-of:   ccdt-platform
+  annotations:
+    description: "Layer-1 eBPF collector — read-only cluster observer"
+
+---
+# ── ClusterRole: read pods, nodes, namespaces, events ────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ccdt-layer1-nervous
+  labels:
+    app.kubernetes.io/name:    layer1-nervous
+    app.kubernetes.io/part-of: ccdt-platform
+rules:
+  # Core: read pods, nodes, namespaces (for metadata enrichment of eBPF events)
+  - apiGroups: [""]
+    resources:
+      - pods
+      - nodes
+      - namespaces
+      - endpoints
+      - services
+    verbs: [get, list, watch]
+
+  # Core: read events (for correlation with eBPF anomalies)
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [get, list, watch]
+
+  # Apps: read deployments/daemonsets (for workload metadata)
+  - apiGroups: [apps]
+    resources:
+      - deployments
+      - daemonsets
+      - replicasets
+      - statefulsets
+    verbs: [get, list, watch]
+
+  # Node metrics (for CPU/memory cross-reference)
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes, pods]
+    verbs: [get, list]
+
+  # Needed for eBPF programs to identify container runtime info
+  - apiGroups: [""]
+    resources: [nodes/proxy, nodes/stats]
+    verbs: [get]
+
+---
+# ── ClusterRoleBinding ────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ccdt-layer1-nervous
+  labels:
+    app.kubernetes.io/name:    layer1-nervous
+    app.kubernetes.io/part-of: ccdt-platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind:     ClusterRole
+  name:     ccdt-layer1-nervous
+subjects:
+  - kind:      ServiceAccount
+    name:      layer1-nervous
+    namespace: ccdt
+
+---
+# ── Role (namespace-scoped): write events into ccdt namespace ────────────────
+# Layer-1 can emit Kubernetes Events for critical eBPF findings (e.g. attacks).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: layer1-event-writer
+  namespace: ccdt
+  labels:
+    app.kubernetes.io/name:    layer1-nervous
+    app.kubernetes.io/part-of: ccdt-platform
+rules:
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch, update]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: layer1-event-writer
+  namespace: ccdt
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind:     Role
+  name:     layer1-event-writer
+subjects:
+  - kind:      ServiceAccount
+    name:      layer1-nervous
+    namespace: ccdt
+
+---
+# ── PodSecurityPolicy exception (for clusters still using PSP) ───────────────
+# On PSA-enforced clusters (K8s 1.25+), use a namespace-level label override
+# for the layer1 DaemonSet pod. See daemonset.yaml for the pod-level label.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ccdt-layer1-psp-privileged
+  labels:
+    app.kubernetes.io/name:    layer1-nervous
+    app.kubernetes.io/part-of: ccdt-platform
+  annotations:
+    description: "Allows layer1 DaemonSet to run privileged (needed for eBPF)"
+rules:
+  - apiGroups:     [policy]
+    resources:     [podsecuritypolicies]
+    resourceNames: [privileged]
+    verbs:         [use]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ccdt-layer1-psp-privileged
+  labels:
+    app.kubernetes.io/name:    layer1-nervous
+    app.kubernetes.io/part-of: ccdt-platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind:     ClusterRole
+  name:     ccdt-layer1-psp-privileged
+subjects:
+  - kind:      ServiceAccount
+    name:      layer1-nervous
+    namespace: ccdt

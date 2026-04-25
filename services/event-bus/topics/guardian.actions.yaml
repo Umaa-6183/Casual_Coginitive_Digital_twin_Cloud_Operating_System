@@ -1,0 +1,164 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT Event Bus — Kafka Topic: ccdt.guardian.actions
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Purpose:
+#   Immutable audit log of every remediation action proposed, approved,
+#   blocked, or executed by the Layer-3 Guardian. This topic is the
+#   authoritative record for compliance, forensics, and RL training
+#   (used as experience replay buffer for the PPO agent).
+#
+# Producers:   layer3-guardian/executor  (single producer)
+# Consumers:   layer4-copilot           (Co-Pilot context — Guardian status feed)
+#              api-gateway              (dashboard action history)
+#              monitoring               (Prometheus action metrics bridge)
+#              compliance-recorder      (immutable audit log sink → S3/Loki)
+#              rl-trainer               (offline PPO experience replay)
+#
+# Throughput estimate:
+#   ~1–20 actions/min during active incidents
+#   Retention: 30 days (compliance + RL training corpus)
+#
+# Message schema (JSON):
+# {
+#   "ts":            1710000000000,    // Unix ms
+#   "pipelineId":    "pipe-abc123",    // Unique pipeline run ID
+#   "actionId":      1,                // 0-14 (see rl/env.py ACTION_NAMES)
+#   "actionName":    "isolate_container",
+#   "targetNode":    "order-svc",
+#   "incidentType":  "attack",         // fault | attack
+#   "autonomyMode":  "supervised",     // human-in-loop | supervised | full-auto
+#   "status":        "executed",       // proposed|approved|blocked_ghost_risk|
+#                                      //   blocked_opa_policy|executed|
+#                                      //   execution_failed|pending_human_approval|
+#                                      //   rejected_by_human|escalated
+#   "ghostPreview": {
+#     "approved":          true,
+#     "riskScore":         0.18,
+#     "mttrDeltaMin":      -8.0,
+#     "blastRadiusDelta":  -2
+#   },
+#   "opaResult": {
+#     "allowed":    true,
+#     "violations": [],
+#     "source":     "opa"              // opa | local_fallback
+#   },
+#   "execution": {
+#     "success":    true,
+#     "detail":     "NetworkPolicy 'isolate-order-svc-...' created",
+#     "dryRun":     false
+#   },
+#   "rlAction": {
+#     "actionId":   1,
+#     "confidence": 0.84,
+#     "topRanked":  [...]
+#   },
+#   "totalMs":     234.5
+# }
+# ═══════════════════════════════════════════════════════════════════════════════
+
+topic:
+  name: ccdt.guardian.actions
+  # 6 partitions — one per action category for parallel compliance consumers
+  # Partitioned by targetNode for ordering of actions on the same service
+  partitions: 6
+  replication_factor: 3
+
+  config:
+    # 30 days — compliance requirement + RL training corpus
+    retention.ms: "2592000000"          # 30 days
+    retention.bytes: "10737418240"      # 10 GB ceiling
+    segment.ms: "86400000"             # Roll segment daily
+    segment.bytes: "536870912"          # 512 MB
+    compression.type: gzip
+    min.insync.replicas: "2"
+    cleanup.policy: delete
+    # Action messages can be large due to nested ghost preview + OPA results
+    max.message.bytes: "524288"         # 512 KB
+
+  schema:
+    format: json
+    key:
+      description: "targetNode (partition by service for ordering)"
+      type: string
+      example: "order-svc"
+    value:
+      description: "Guardian remediation action record"
+      required_fields:
+        - ts
+        - pipelineId
+        - actionId
+        - actionName
+        - targetNode
+        - status
+        - autonomyMode
+      optional_fields:
+        - incidentType
+        - ghostPreview
+        - opaResult
+        - execution
+        - rlAction
+        - totalMs
+
+  consumer_groups:
+    - id: ccdt-copilot-guardian-feed
+      description: "Layer-4 Co-Pilot — Guardian status for context_builder"
+      auto_offset_reset: latest
+      max_poll_records: 20
+      session_timeout_ms: 30000
+
+    - id: ccdt-dashboard-actions
+      description: "API Gateway — dashboard action history panel"
+      auto_offset_reset: latest
+      max_poll_records: 50
+      session_timeout_ms: 10000
+
+    - id: ccdt-compliance-recorder
+      description: "Compliance sink — append-only write to S3 / Loki / OpenSearch"
+      auto_offset_reset: earliest       # Must not miss any action for audit trail
+      max_poll_records: 200
+      session_timeout_ms: 60000
+      enable_auto_commit: false         # Manual commit after successful S3 write
+
+    - id: ccdt-rl-experience-replay
+      description: "PPO offline training — builds (obs, action, reward) experience tuples"
+      auto_offset_reset: earliest
+      max_poll_records: 500
+      session_timeout_ms: 120000
+
+  alerts:
+    - name: opa_denial_spike
+      description: "OPA denial rate > 20% in 5 min window — policy misconfiguration?"
+      threshold_denial_rate_pct: 20
+      window_minutes: 5
+
+    - name: escalation_rate
+      description: "Human escalation rate > 30% — RL agent may need retraining"
+      threshold_escalation_rate_pct: 30
+      window_minutes: 60
+
+    - name: execution_failure
+      description: "K8s execution failure — Kubernetes API may be degraded"
+      status: execution_failed
+
+    - name: drain_node_proposed
+      description: "drain_node proposed — always alert regardless of approval status"
+      action_name: drain_node
+      priority: high
+
+  # Partition assignment strategy
+  partition_strategy:
+    key: targetNode
+    description: "All actions targeting the same node go to the same partition.
+      This ensures consumers see the causal sequence of actions on a node in order,
+      which is required for the RL experience-replay consumer."
+
+  # Topic creation command:
+  # kafka-topics.sh --create \
+  #   --bootstrap-server kafka:9092 \
+  #   --topic ccdt.guardian.actions \
+  #   --partitions 6 \
+  #   --replication-factor 3 \
+  #   --config retention.ms=2592000000 \
+  #   --config compression.type=gzip \
+  #   --config max.message.bytes=524288

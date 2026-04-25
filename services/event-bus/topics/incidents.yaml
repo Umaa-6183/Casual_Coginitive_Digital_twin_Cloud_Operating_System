@@ -1,0 +1,227 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT Event Bus — Kafka Topic: ccdt.incidents
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Purpose:
+#   High-level incident lifecycle events spanning all four CCDT layers.
+#   Unlike ccdt.gnn.inference (raw ML output) or ccdt.guardian.actions
+#   (raw executor decisions), this topic carries enriched, correlated
+#   incident records with a stable ID from detection through resolution.
+#
+#   This is the primary topic consumed by:
+#     - External ticketing (PagerDuty, Jira, Slack)
+#     - Incident post-mortem storage (PostgreSQL incidents table)
+#     - Co-Pilot dashboard incident panel
+#     - SLA / MTTR reporting pipeline
+#
+# Producers:   api-gateway/incident_manager  (creates OPENED / UPDATED / CLOSED)
+#              layer4-copilot/copilot        (appends AI_SUMMARY sub-events)
+#              layer3-guardian/executor      (appends REMEDIATION sub-events)
+#
+# Consumers:   api-gateway             (dashboard incident panel + websocket push)
+#              layer4-copilot          (incident context for Co-Pilot sessions)
+#              external-notifications  (PagerDuty / Slack webhook bridge)
+#              incident-db-writer      (PostgreSQL sink)
+#              reporting-pipeline      (MTTR / SLA metrics aggregation)
+#
+# Throughput estimate:
+#   ~10–100 incidents/day in steady state
+#   Peak: ~500 events/day during a major outage
+#   Retention: 90 days (SLA / compliance reporting)
+#
+# Event types (eventType field):
+#   INCIDENT_OPENED     New incident detected — first GNN classification
+#   INCIDENT_UPDATED    Blast radius expanded, new root cause, severity change
+#   REMEDIATION_STARTED Guardian pipeline triggered
+#   REMEDIATION_APPLIED Action successfully executed on K8s
+#   REMEDIATION_BLOCKED Action blocked by OPA or Ghost Preview
+#   ESCALATED_TO_HUMAN  Guardian requested human approval
+#   HUMAN_APPROVED      On-call approved a blocked action
+#   HUMAN_REJECTED      On-call rejected a proposed action
+#   AI_SUMMARY_READY    Co-Pilot generated an incident summary
+#   INCIDENT_RESOLVED   All nodes healthy — incident closed
+#   INCIDENT_TIMEOUT    Max remediation steps exceeded — still open
+#
+# Message schema (JSON):
+# {
+#   "ts":           1710000000000,     // Unix ms (event time)
+#   "incidentId":   "INC-20240315-042",
+#   "eventType":    "INCIDENT_OPENED", // See event types above
+#   "severity":     "critical",        // info | low | medium | high | critical
+#   "incidentType": "attack",          // healthy | fault | attack
+#   "title":        "PostgreSQL OOM cascade — order-svc critical",
+#   "rootCauseNode": "postgres",
+#   "rootCauseConf":  0.92,
+#   "blastRadius":  ["order-svc", "postgres", "notify-svc"],
+#   "mttrMinutes":  null,              // Populated on INCIDENT_RESOLVED
+#   "affectedNamespace": "production",
+#   "payload": { ... },               // Event-type-specific fields (see below)
+#   "source":    "gnn",               // gnn | guardian | copilot | human
+#   "version":   1                    // Schema version
+# }
+#
+# Payload by event type:
+#   INCIDENT_OPENED:
+#     { "inferenceId": "...", "graphClassification": {...} }
+#
+#   REMEDIATION_APPLIED:
+#     { "actionName": "rollback_deployment", "targetNode": "...",
+#       "riskScore": 0.15, "mttrDeltaMin": -8.0 }
+#
+#   REMEDIATION_BLOCKED:
+#     { "actionName": "...", "blockedBy": "opa_policy",
+#       "violations": ["..."] }
+#
+#   AI_SUMMARY_READY:
+#     { "summary": "...", "model": "claude-sonnet-4-20250514" }
+#
+#   INCIDENT_RESOLVED:
+#     { "mttrMinutes": 18, "actionsExecuted": 3,
+#       "resolvedBy": "guardian_auto" }
+# ═══════════════════════════════════════════════════════════════════════════════
+
+topic:
+  name: ccdt.incidents
+  # Low partition count — incidents are infrequent; ordering by incidentId matters
+  # more than parallelism here.
+  partitions: 3
+  replication_factor: 3
+
+  config:
+    # 90 days — SLA reporting, compliance, post-mortem corpus
+    retention.ms: "7776000000"          # 90 days
+    retention.bytes: "5368709120"       # 5 GB ceiling
+    segment.ms: "86400000"             # Roll daily
+    segment.bytes: "268435456"          # 256 MB
+    compression.type: gzip
+    min.insync.replicas: "2"
+    # Compaction ON TOP of time-based deletion — keep latest state per incidentId
+    # This allows consumers starting fresh to see the current state of each incident
+    cleanup.policy: "compact,delete"
+    max.message.bytes: "1048576"        # 1 MB — AI summaries can be verbose
+
+  schema:
+    format: json
+    key:
+      description: "incidentId (enables log compaction per incident)"
+      type: string
+      pattern: "^INC-[0-9]{8}-[0-9]{3,6}$"
+      example: "INC-20240315-042"
+    value:
+      description: "Incident lifecycle event"
+      required_fields:
+        - ts
+        - incidentId
+        - eventType
+        - severity
+        - incidentType
+        - title
+        - source
+        - version
+      optional_fields:
+        - rootCauseNode
+        - rootCauseConf
+        - blastRadius
+        - mttrMinutes
+        - affectedNamespace
+        - payload
+
+    event_types:
+      - INCIDENT_OPENED
+      - INCIDENT_UPDATED
+      - REMEDIATION_STARTED
+      - REMEDIATION_APPLIED
+      - REMEDIATION_BLOCKED
+      - ESCALATED_TO_HUMAN
+      - HUMAN_APPROVED
+      - HUMAN_REJECTED
+      - AI_SUMMARY_READY
+      - INCIDENT_RESOLVED
+      - INCIDENT_TIMEOUT
+
+  consumer_groups:
+    - id: ccdt-dashboard-incidents
+      description: "API Gateway — incident panel + WebSocket push to dashboard"
+      auto_offset_reset: latest
+      max_poll_records: 20
+      session_timeout_ms: 10000
+
+    - id: ccdt-pagerduty-bridge
+      description: "External notifications — PagerDuty webhook for CRITICAL events"
+      auto_offset_reset: latest
+      max_poll_records: 10
+      session_timeout_ms: 10000
+      filter:
+        severity: ["critical", "high"]
+        eventType: ["INCIDENT_OPENED", "INCIDENT_TIMEOUT", "ESCALATED_TO_HUMAN"]
+
+    - id: ccdt-slack-bridge
+      description: "Slack notification bridge — posts to #incidents channel"
+      auto_offset_reset: latest
+      max_poll_records: 20
+      session_timeout_ms: 10000
+
+    - id: ccdt-incident-db-writer
+      description: "PostgreSQL sink — persistent incident store"
+      auto_offset_reset: earliest
+      max_poll_records: 100
+      session_timeout_ms: 60000
+      enable_auto_commit: false         # Manual commit after successful DB write
+
+    - id: ccdt-mttr-reporting
+      description: "MTTR / SLA metrics pipeline — Prometheus + Grafana dashboards"
+      auto_offset_reset: earliest
+      max_poll_records: 500
+      session_timeout_ms: 120000
+
+    - id: ccdt-copilot-incidents
+      description: "Layer-4 Co-Pilot — incident context for active sessions"
+      auto_offset_reset: latest
+      max_poll_records: 10
+      session_timeout_ms: 30000
+
+  alerts:
+    - name: critical_incident_opened
+      description: "INCIDENT_OPENED with severity=critical — immediate page"
+      event_type: INCIDENT_OPENED
+      severity: critical
+      priority: p1
+
+    - name: attack_incident_opened
+      description: "INCIDENT_OPENED with incidentType=attack — security response"
+      event_type: INCIDENT_OPENED
+      incident_type: attack
+      priority: p1
+
+    - name: incident_timeout
+      description: "INCIDENT_TIMEOUT — Guardian could not auto-resolve, needs human"
+      event_type: INCIDENT_TIMEOUT
+      priority: p2
+
+    - name: high_mttr
+      description: "INCIDENT_RESOLVED with mttrMinutes > 60 — review Guardian policies"
+      event_type: INCIDENT_RESOLVED
+      threshold_mttr_minutes: 60
+
+  # SLA thresholds for MTTR reporting
+  sla:
+    critical_mttr_target_minutes: 15
+    high_mttr_target_minutes:     30
+    medium_mttr_target_minutes:   120
+    low_mttr_target_minutes:      480
+
+  # Incident ID generation format:
+  # INC-YYYYMMDD-NNN  (NNN = zero-padded daily sequence number)
+  # Example: INC-20240315-042 (42nd incident on 2024-03-15)
+  id_format: "INC-{date:%Y%m%d}-{seq:03d}"
+
+  # Topic creation command:
+  # kafka-topics.sh --create \
+  #   --bootstrap-server kafka:9092 \
+  #   --topic ccdt.incidents \
+  #   --partitions 3 \
+  #   --replication-factor 3 \
+  #   --config retention.ms=7776000000 \
+  #   --config compression.type=gzip \
+  #   --config cleanup.policy=compact,delete \
+  #   --config max.message.bytes=1048576

@@ -1,0 +1,494 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT Monitoring — Alertmanager Deployment + ConfigMap + Service
+# ═══════════════════════════════════════════════════════════════════════════════
+# Routes Prometheus alerts to:
+#   • PagerDuty   — CRITICAL / P1 incidents and security attacks
+#   • Slack       — all alerts → #ccdt-alerts; critical → #ccdt-incidents
+#   • Email       — daily digest (optional)
+#
+# Inhibition rules prevent alert storms during incidents:
+#   • GNN inference silent → inhibit all Layer-2 classification alerts
+#   • Guardian down        → inhibit all remediation failure alerts
+#
+# Quick-start:
+#   kubectl create secret generic alertmanager-credentials \
+#     --from-literal=pagerduty-key='<your-pd-integration-key>' \
+#     --from-literal=slack-webhook='https://hooks.slack.com/...' \
+#     --from-literal=smtp-password='<smtp-password>' \
+#     -n monitoring
+#
+#   kubectl apply -f alertmanager.yaml
+#   kubectl port-forward svc/alertmanager 9093:9093 -n monitoring
+#   # UI: http://localhost:9093
+# ═══════════════════════════════════════════════════════════════════════════════
+---
+# ── Credentials secret template ──────────────────────────────────────────────
+# Create this manually before applying (see instructions above).
+# This placeholder avoids errors when applying to a fresh cluster.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: alertmanager-credentials
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    alertmanager
+    app.kubernetes.io/part-of: ccdt-platform
+  annotations:
+    description: "Populate pagerduty-key and slack-webhook before production deploy"
+type: Opaque
+stringData:
+  pagerduty-key:  "REPLACE_WITH_PD_INTEGRATION_KEY"
+  slack-webhook:  "https://hooks.slack.com/services/REPLACE/WITH/REAL_WEBHOOK"
+  smtp-password:  "REPLACE_WITH_SMTP_PASSWORD"
+
+---
+# ── Alertmanager configuration ────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    alertmanager
+    app.kubernetes.io/part-of: ccdt-platform
+data:
+  alertmanager.yml: |
+    global:
+      # Default resolve timeout — how long until an alert is considered resolved
+      resolve_timeout: 5m
+
+      # PagerDuty global URL
+      pagerduty_url: "https://events.pagerduty.com/v2/enqueue"
+
+      # Slack global URL (overridden per receiver)
+      slack_api_url: "https://hooks.slack.com/services/REPLACE/WITH/REAL_WEBHOOK"
+
+      # SMTP for email alerts (optional)
+      smtp_smarthost:    "smtp.gmail.com:587"
+      smtp_from:         "ccdt-alerts@yourcompany.com"
+      smtp_auth_username: "ccdt-alerts@yourcompany.com"
+      smtp_auth_password: "REPLACE_WITH_SMTP_PASSWORD"
+      smtp_require_tls:  true
+
+    # ── Routing tree ────────────────────────────────────────────────────────────
+    route:
+      # Default receiver for unmatched alerts
+      receiver: slack-general
+
+      # Group alerts by these labels — all alerts for the same pod/namespace
+      # are grouped into a single notification
+      group_by:
+        - alertname
+        - namespace
+        - layer
+        - severity
+
+      # Wait this long before sending the first notification
+      group_wait:      30s
+
+      # Wait this long before sending a new notification for a new alert
+      # in an already-notified group
+      group_interval:  5m
+
+      # Re-send notification for firing alerts this often
+      repeat_interval: 4h
+
+      routes:
+        # ── P1: Critical security attack — immediate PagerDuty + Slack ──────
+        - matchers:
+            - alertname =~ ".*Attack.*|.*Security.*|CCDTEbpfCapabilityStorm"
+            - severity  = critical
+          receiver:         pagerduty-p1
+          group_wait:       0s       # immediate for attacks
+          repeat_interval:  30m
+          continue:         true     # also send to Slack below
+
+        # ── P1: Any critical alert — PagerDuty ───────────────────────────────
+        - matchers:
+            - severity = critical
+          receiver:         pagerduty-p1
+          group_wait:       10s
+          repeat_interval:  1h
+          continue:         true
+
+        # ── Guardian/GNN critical alerts → #ccdt-incidents ──────────────────
+        - matchers:
+            - severity  = critical
+            - layer     =~ "layer2|layer3"
+          receiver:         slack-incidents
+          group_wait:       10s
+          repeat_interval:  30m
+
+        # ── Warning alerts → #ccdt-alerts ────────────────────────────────────
+        - matchers:
+            - severity = warning
+          receiver:         slack-warnings
+          group_wait:       60s
+          repeat_interval:  4h
+
+    # ── Inhibition rules ────────────────────────────────────────────────────────
+    inhibit_rules:
+      # If GNN is silent, inhibit all GNN classification and blast-radius alerts
+      - source_matchers:
+          - alertname = CCDTGNNInferenceSilent
+        target_matchers:
+          - layer = layer2
+        equal: [namespace]
+
+      # If Guardian is down, inhibit all remediation-failure alerts
+      - source_matchers:
+          - alertname = CCDTGuardianDown
+        target_matchers:
+          - layer    = layer3
+          - alertname != CCDTGuardianDown
+        equal: [namespace]
+
+      # If a critical alert is firing, suppress the matching warning
+      - source_matchers:
+          - severity = critical
+        target_matchers:
+          - severity = warning
+        equal: [alertname, namespace]
+
+    # ── Receivers ──────────────────────────────────────────────────────────────
+    receivers:
+      # ── Slack: all alerts ─────────────────────────────────────────────────
+      - name: slack-general
+        slack_configs:
+          - api_url: "https://hooks.slack.com/services/REPLACE/WITH/REAL_WEBHOOK"
+            channel: "#ccdt-alerts"
+            send_resolved: true
+            title: >-
+              {{ if eq .Status "firing" }}🔥{{ else }}✅{{ end }}
+              [{{ .Status | toUpper }}{{ if eq .Status "firing" }} x{{.Alerts.Firing | len}}{{ end }}]
+              {{ .CommonLabels.alertname }}
+            text: |
+              {{ range .Alerts }}
+              *Alert:* {{ .Annotations.summary }}
+              *Severity:* {{ .Labels.severity | toUpper }}
+              *Layer:* {{ .Labels.layer | default "platform" }}
+              *Description:* {{ .Annotations.description | default "No description" }}
+              *Started:* {{ .StartsAt | since }}
+              {{ if .Annotations.runbook }}*Runbook:* {{ .Annotations.runbook }}{{ end }}
+              ---
+              {{ end }}
+            color: |
+              {{ if eq .Status "resolved" }}good
+              {{- else if eq .CommonLabels.severity "critical" }}danger
+              {{- else }}warning{{ end }}
+            footer:  "CCDT Alertmanager"
+            icon_emoji: ":robot_face:"
+            username:   "CCDT Alert Bot"
+
+      # ── Slack: incidents channel (critical layer2/3) ───────────────────────
+      - name: slack-incidents
+        slack_configs:
+          - api_url: "https://hooks.slack.com/services/REPLACE/WITH/REAL_WEBHOOK"
+            channel:       "#ccdt-incidents"
+            send_resolved: true
+            title: >-
+              🚨 CCDT INCIDENT: {{ .CommonLabels.alertname }}
+            text: |
+              *Status:* {{ .Status | toUpper }}
+              *Severity:* {{ .CommonLabels.severity | toUpper }}
+              *Layer:* {{ .CommonLabels.layer | default "platform" }}
+
+              {{ range .Alerts.Firing }}
+              *Summary:* {{ .Annotations.summary }}
+              *Description:* {{ .Annotations.description }}
+              *Duration:* {{ .StartsAt | since }}
+              {{ if .Annotations.runbook }}*Runbook:* <{{ .Annotations.runbook }}|View Runbook>{{ end }}
+              {{ end }}
+
+              <!channel> Please investigate immediately.
+            color:     "danger"
+            footer:    "CCDT Alertmanager — INCIDENT CHANNEL"
+            icon_emoji: ":rotating_light:"
+            username:   "CCDT Incident Bot"
+
+      # ── Slack: warnings ───────────────────────────────────────────────────
+      - name: slack-warnings
+        slack_configs:
+          - api_url: "https://hooks.slack.com/services/REPLACE/WITH/REAL_WEBHOOK"
+            channel:       "#ccdt-alerts"
+            send_resolved: true
+            title: >-
+              ⚠️ [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}
+            text: |
+              {{ range .Alerts }}
+              *Summary:* {{ .Annotations.summary }}
+              *Description:* {{ .Annotations.description | default "See Prometheus for details" }}
+              {{ end }}
+            color:     "warning"
+            icon_emoji: ":warning:"
+            username:   "CCDT Alert Bot"
+
+      # ── PagerDuty: P1 critical incidents ─────────────────────────────────
+      - name: pagerduty-p1
+        pagerduty_configs:
+          - routing_key:  "REPLACE_WITH_PD_INTEGRATION_KEY"
+            send_resolved: true
+            severity: |
+              {{ if eq .CommonLabels.severity "critical" }}critical
+              {{ else if eq .CommonLabels.severity "warning" }}warning
+              {{ else }}info{{ end }}
+            class:    "{{ .CommonLabels.alertname }}"
+            group:    "{{ .CommonLabels.namespace | default \"ccdt\" }}"
+            component: "{{ .CommonLabels.layer | default \"platform\" }}"
+            summary:  "{{ .CommonAnnotations.summary }}"
+            description: |
+              Alert: {{ .CommonLabels.alertname }}
+              Severity: {{ .CommonLabels.severity | toUpper }}
+              Layer: {{ .CommonLabels.layer }}
+              {{ .CommonAnnotations.description }}
+            details:
+              firing:      '{{ .Alerts.Firing | len }}'
+              resolved:    '{{ .Alerts.Resolved | len }}'
+              namespace:   '{{ .CommonLabels.namespace }}'
+              cluster:     'ccdt-production'
+            links:
+              - href: "http://grafana.monitoring.svc.cluster.local:3000/d/ccdt-overview"
+                text: "CCDT Grafana Overview"
+              - href: "http://prometheus.monitoring.svc.cluster.local:9090/alerts"
+                text: "Prometheus Alerts"
+
+  # ── Template helpers ─────────────────────────────────────────────────────────
+  # Alertmanager Go templates used in receiver text blocks above.
+  # Placed in /etc/alertmanager/templates/ and auto-loaded.
+  ccdt-templates.tmpl: |
+    {{ define "ccdt.title" -}}
+    {{ if eq .Status "firing" -}}
+      🔥 [FIRING x{{ .Alerts.Firing | len }}]
+    {{- else -}}
+      ✅ [RESOLVED]
+    {{- end }} {{ .CommonLabels.alertname }} — {{ .CommonLabels.severity | toUpper }}
+    {{- end }}
+
+    {{ define "ccdt.summary" -}}
+    {{ range .Alerts -}}
+    *{{ .Annotations.summary }}*
+    {{ .Annotations.description }}
+    Labels: {{ range .Labels.SortedPairs }}{{ .Name }}={{ .Value }} {{ end }}
+    {{ end -}}
+    {{- end }}
+
+    {{ define "ccdt.runbook" -}}
+    {{ if .CommonAnnotations.runbook -}}
+    :book: <{{ .CommonAnnotations.runbook }}|Runbook>
+    {{- end }}
+    {{- end }}
+
+---
+# ── PVC ───────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: alertmanager-data
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    alertmanager
+    app.kubernetes.io/part-of: ccdt-platform
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# ── Deployment ────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    alertmanager
+    app.kubernetes.io/part-of: ccdt-platform
+  annotations:
+    description: "CCDT Alertmanager — routes Prometheus alerts to PagerDuty + Slack"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  strategy:
+    type: Recreate
+
+  template:
+    metadata:
+      labels:
+        app:                       alertmanager
+        app.kubernetes.io/name:    alertmanager
+        app.kubernetes.io/part-of: ccdt-platform
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "9093"
+
+    spec:
+      securityContext:
+        fsGroup:    65534
+        runAsUser:  65534
+        runAsGroup: 65534
+
+      initContainers:
+        # Inject credentials from Secret into alertmanager.yml at runtime
+        - name: inject-credentials
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              # Replace placeholder values with real secrets from env
+              sed \
+                -e "s|REPLACE_WITH_PD_INTEGRATION_KEY|${PAGERDUTY_KEY}|g" \
+                -e "s|REPLACE/WITH/REAL_WEBHOOK|${SLACK_PATH}|g" \
+                -e "s|REPLACE_WITH_SMTP_PASSWORD|${SMTP_PASSWORD}|g" \
+                /etc/alertmanager-template/alertmanager.yml \
+                > /etc/alertmanager/alertmanager.yml
+              cp /etc/alertmanager-template/ccdt-templates.tmpl \
+                 /etc/alertmanager/templates/ccdt-templates.tmpl
+              echo "Credentials injected into alertmanager.yml"
+          env:
+            - name: PAGERDUTY_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: alertmanager-credentials
+                  key:  pagerduty-key
+            - name: SLACK_PATH
+              valueFrom:
+                secretKeyRef:
+                  name: alertmanager-credentials
+                  key:  slack-webhook
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: alertmanager-credentials
+                  key:  smtp-password
+          volumeMounts:
+            - name:      alertmanager-config-template
+              mountPath: /etc/alertmanager-template
+            - name:      alertmanager-config-live
+              mountPath: /etc/alertmanager
+            - name:      alertmanager-templates
+              mountPath: /etc/alertmanager/templates
+
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.27.0
+          imagePullPolicy: IfNotPresent
+
+          args:
+            - --config.file=/etc/alertmanager/alertmanager.yml
+            - --storage.path=/alertmanager
+            - --web.listen-address=0.0.0.0:9093
+            - --web.route-prefix=/
+            - --log.level=info
+            - --log.format=json
+            # Cluster HA (for multi-replica Alertmanager — currently 1 replica)
+            # - --cluster.listen-address=0.0.0.0:9094
+            # - --cluster.peer=alertmanager-1:9094
+
+          ports:
+            - name:          http
+              containerPort: 9093
+              protocol:      TCP
+            - name:          cluster
+              containerPort: 9094
+              protocol:      TCP
+
+          volumeMounts:
+            - name:      alertmanager-config-live
+              mountPath: /etc/alertmanager
+            - name:      alertmanager-templates
+              mountPath: /etc/alertmanager/templates
+            - name:      alertmanager-data
+              mountPath: /alertmanager
+
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9093
+            initialDelaySeconds: 15
+            periodSeconds:       15
+            failureThreshold:    3
+            timeoutSeconds:      10
+
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9093
+            initialDelaySeconds: 5
+            periodSeconds:       10
+            failureThreshold:    3
+
+          resources:
+            requests:
+              cpu:    "50m"
+              memory: "64Mi"
+            limits:
+              cpu:    "200m"
+              memory: "256Mi"
+
+          securityContext:
+            runAsNonRoot:             true
+            runAsUser:                65534
+            readOnlyRootFilesystem:   false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+
+      terminationGracePeriodSeconds: 30
+
+      volumes:
+        - name: alertmanager-config-template
+          configMap:
+            name: alertmanager-config
+        - name: alertmanager-config-live
+          emptyDir: {}
+        - name: alertmanager-templates
+          emptyDir: {}
+        - name: alertmanager-data
+          persistentVolumeClaim:
+            claimName: alertmanager-data
+
+---
+# ── Service ───────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    alertmanager
+    app.kubernetes.io/part-of: ccdt-platform
+spec:
+  selector:
+    app: alertmanager
+  ports:
+    - name:       http
+      port:       9093
+      targetPort: http
+      protocol:   TCP
+    - name:       cluster
+      port:       9094
+      targetPort: cluster
+      protocol:   TCP
+  type: ClusterIP
+
+---
+# ── PodDisruptionBudget ───────────────────────────────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: alertmanager
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    alertmanager
+    app.kubernetes.io/part-of: ccdt-platform
+spec:
+  minAvailable: 0
+  selector:
+    matchLabels:
+      app: alertmanager

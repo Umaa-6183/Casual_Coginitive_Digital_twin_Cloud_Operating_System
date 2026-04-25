@@ -1,0 +1,49 @@
+apiVersion: v2
+name: ccdt
+description: >
+  CCDT — Cognitive Cloud Digital Twin for the Cloud Operating System.
+  Level-4 Autonomous AIOps Security Platform with 4 biological layers:
+  Layer-1 eBPF Nervous System, Layer-2 Causal GNN Cognitive Core,
+  Layer-3 RL Guardian, Layer-4 Claude AI Co-Pilot.
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.27.0-0"
+
+home:    https://github.com/your-org/ccdt
+sources: ["https://github.com/your-org/ccdt"]
+
+maintainers:
+  - name:  CCDT Platform Engineering
+    email: platform@yourcompany.com
+
+keywords:
+  - aiops
+  - ebpf
+  - kubernetes
+  - causal-gnn
+  - reinforcement-learning
+  - llm
+  - security
+  - monitoring
+  - digital-twin
+
+dependencies:
+  - name:       kafka
+    version:    "29.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition:  kafka.enabled
+    tags:       [event-bus]
+
+  - name:       redis
+    version:    "20.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition:  redis.enabled
+    tags:       [cache]
+
+  - name:       kube-prometheus-stack
+    version:    "61.x.x"
+    repository: https://prometheus-community.github.io/helm-charts
+    condition:  monitoring.prometheus.enabled
+    tags:       [monitoring]
+    alias:      prometheus

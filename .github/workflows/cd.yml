@@ -1,0 +1,660 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# CCDT — Continuous Deployment Pipeline
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Trigger matrix
+# ──────────────
+#   push to main (sha tag)  → build images → push to GHCR → deploy staging
+#   push of v* tag          → build images → push to GHCR → deploy staging → deploy prod
+#   workflow_dispatch       → manual deploy to staging OR prod
+#
+# Deployment strategy
+# ───────────────────
+#   • Staging:    rolling update via Helm, automatic on every main merge
+#   • Production: blue-green via Helm + manual approval gate (GitHub Environment)
+#                 only triggered by semver tag push (v1.2.3)
+#
+# Required repository secrets
+# ───────────────────────────
+#   ANTHROPIC_API_KEY     → Anthropic API key for staging and prod deployments
+#   JWT_SECRET_STAGING    → JWT signing secret (staging)
+#   JWT_SECRET_PROD       → JWT signing secret (production)
+#   KUBECONFIG_STAGING    → base64-encoded kubeconfig for staging EKS cluster
+#   KUBECONFIG_PROD       → base64-encoded kubeconfig for production EKS cluster
+#   STAGING_HEALTH_TOKEN  → Bearer token for staging health-check endpoints
+#   CODECOV_TOKEN         → Optional — for coverage upload
+#   SLACK_WEBHOOK         → Optional — deployment notifications
+#   PD_ROUTING_KEY        → Optional — PagerDuty for failed prod deploys
+#
+# Required GitHub Environments
+# ────────────────────────────
+#   staging     → no protection rules (auto-deploys on main merge)
+#   production  → required reviewers: 1, deployment branch: tags/v*
+#
+# ══════════════════════════════════════════════════════════════════════════════
+
+name: CD
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+" # semver tags: v1.2.3
+      - "v[0-9]+.[0-9]+.[0-9]+-rc*" # release candidates: v1.2.3-rc1
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        type: choice
+        options: [staging, production]
+        default: staging
+      image_tag:
+        description: "Image tag to deploy (leave blank to use latest main SHA)"
+        type: string
+        default: ""
+      skip_smoke:
+        description: "Skip post-deploy smoke tests?"
+        type: boolean
+        default: false
+
+concurrency:
+  group: cd-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false # never cancel a running deployment
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/ccdt
+  HELM_CHART: infra/helm/ccdt
+  HELM_RELEASE: ccdt
+  K8S_NAMESPACE: ccdt
+
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  # ── Compute image tag ────────────────────────────────────────────────────
+  prepare:
+    name: Prepare — Compute Image Tag
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+      is_release: ${{ steps.tag.outputs.is_release }}
+      short_sha: ${{ steps.tag.outputs.short_sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: tag
+        run: |
+          SHORT_SHA="${GITHUB_SHA::8}"
+
+          # Manual dispatch with explicit tag override
+          if [[ -n "${{ inputs.image_tag }}" ]]; then
+            TAG="${{ inputs.image_tag }}"
+            IS_RELEASE="false"
+
+          # Semver tag push → production release
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            IS_RELEASE="true"
+
+          # Main branch push → dev build tagged with short SHA
+          else
+            TAG="${SHORT_SHA}"
+            IS_RELEASE="false"
+          fi
+
+          echo "tag=${TAG}"               >> $GITHUB_OUTPUT
+          echo "is_release=${IS_RELEASE}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}"   >> $GITHUB_OUTPUT
+
+          echo "### 🏷️ Deployment Tag"                       >> $GITHUB_STEP_SUMMARY
+          echo "| Key | Value |"                             >> $GITHUB_STEP_SUMMARY
+          echo "|-----|-------|"                             >> $GITHUB_STEP_SUMMARY
+          echo "| Image tag  | \`${TAG}\` |"                >> $GITHUB_STEP_SUMMARY
+          echo "| Is release | ${IS_RELEASE} |"             >> $GITHUB_STEP_SUMMARY
+          echo "| Git SHA    | \`${GITHUB_SHA}\` |"         >> $GITHUB_STEP_SUMMARY
+
+  # ── Build & push all Docker images to GHCR ───────────────────────────────
+  build-push:
+    name: Build & Push — ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: [prepare]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: layer1-nervous
+            context: services/layer1-nervous
+            dockerfile: services/layer1-nervous/Dockerfile
+
+          - service: layer2-cognitive
+            context: services/layer2-cognitive
+            dockerfile: services/layer2-cognitive/Dockerfile
+
+          - service: layer3-guardian
+            context: services/layer3-guardian
+            dockerfile: services/layer3-guardian/Dockerfile
+
+          - service: layer4-copilot
+            context: services/layer4-copilot
+            dockerfile: services/layer4-copilot/Dockerfile
+
+          - service: api-gateway
+            context: apps/api-gateway
+            dockerfile: apps/api-gateway/Dockerfile
+
+          - service: dashboard
+            context: apps/dashboard
+            dockerfile: apps/dashboard/Dockerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (multi-arch support)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
+          tags: |
+            type=raw,value=${{ needs.prepare.outputs.image_tag }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.is_release == 'true' }}
+            type=sha,prefix=sha-,format=short
+          labels: |
+            org.opencontainers.image.title=CCDT ${{ matrix.service }}
+            org.opencontainers.image.description=Cognitive Cloud Digital Twin — ${{ matrix.service }}
+            org.opencontainers.image.vendor=CCDT Platform Engineering
+            ccdt.layer=${{ matrix.service }}
+            ccdt.version=${{ needs.prepare.outputs.image_tag }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            GIT_SHA=${{ github.sha }}
+            VERSION=${{ needs.prepare.outputs.image_tag }}
+          provenance: true
+          sbom: true
+
+      - name: Scan image for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ needs.prepare.outputs.image_tag }}
+          format: sarif
+          output: trivy-${{ matrix.service }}.sarif
+          exit-code: 0 # warn only — change to 1 to block on CRITICAL CVEs
+          severity: CRITICAL,HIGH
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.service }}.sarif
+          category: trivy-${{ matrix.service }}
+
+      - name: Record image digest
+        run: |
+          echo "## Image: ${{ matrix.service }}"              >> $GITHUB_STEP_SUMMARY
+          echo "**Digest:** \`${{ steps.build.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** \`${{ needs.prepare.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
+
+  # ── Deploy to Staging ─────────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy → Staging
+    runs-on: ubuntu-latest
+    needs: [prepare, build-push]
+    environment:
+      name: staging
+      url: https://staging.ccdt.example.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.2
+
+      - name: Configure staging kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_STAGING }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          kubectl cluster-info
+
+      - name: Add Helm repos
+        run: |
+          helm repo add bitnami              https://charts.bitnami.com/bitnami
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+
+      - name: Helm dependency update
+        working-directory: ${{ env.HELM_CHART }}
+        run: helm dependency update
+
+      - name: Create / update Kubernetes secrets
+        run: |
+          kubectl create namespace ${{ env.K8S_NAMESPACE }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic ccdt-secrets \
+            --namespace ${{ env.K8S_NAMESPACE }} \
+            --from-literal=anthropic-api-key="${{ secrets.ANTHROPIC_API_KEY }}" \
+            --from-literal=jwt-secret="${{ secrets.JWT_SECRET_STAGING }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Helm upgrade (staging)
+        run: |
+          helm upgrade --install ${{ env.HELM_RELEASE }} ./${{ env.HELM_CHART }} \
+            --namespace ${{ env.K8S_NAMESPACE }} \
+            --create-namespace \
+            --set global.imageTag=${{ needs.prepare.outputs.image_tag }} \
+            --set global.imageRegistry=${{ env.IMAGE_PREFIX }} \
+            --set global.domain=staging.ccdt.example.com \
+            --set layer3.env.autonomyMode=supervised \
+            --set monitoring.serviceMonitor.enabled=true \
+            --values ${{ env.HELM_CHART }}/values.yaml \
+            --atomic \
+            --timeout 12m \
+            --wait \
+            --wait-for-jobs
+
+      - name: Wait for rollout
+        run: |
+          for deploy in \
+            ccdt-layer2-cognitive \
+            ccdt-layer3-guardian \
+            ccdt-layer4-copilot \
+            ccdt-api-gateway \
+            ccdt-dashboard; do
+            echo "Waiting for $deploy ..."
+            kubectl rollout status deployment/$deploy \
+              -n ${{ env.K8S_NAMESPACE }} --timeout=300s
+          done
+          kubectl rollout status daemonset/ccdt-layer1-nervous \
+            -n ${{ env.K8S_NAMESPACE }} --timeout=120s
+
+      # FIX: guard inputs.skip_smoke with event_name check so push triggers
+      #      don't crash when inputs is undefined
+      - name: Smoke test — health endpoints
+        if: >
+          github.event_name != 'workflow_dispatch' ||
+          inputs.skip_smoke != true
+        run: |
+          GATEWAY_URL="https://staging.ccdt.example.com"
+
+          echo "Testing API Gateway health ..."
+          for i in $(seq 1 10); do
+            STATUS=$(curl -fsS -o /dev/null -w "%{http_code}" \
+              "${GATEWAY_URL}/health" --connect-timeout 5 || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "  ✅ Gateway healthy (attempt $i)"
+              break
+            fi
+            echo "  Attempt $i: HTTP $STATUS — retrying in 10s ..."
+            sleep 10
+          done
+
+          if [ "$STATUS" != "200" ]; then
+            echo "❌ Gateway health check failed after 10 attempts"
+            exit 1
+          fi
+
+          for path in \
+            /api/v1/health \
+            /internal/layer2/health \
+            /internal/layer3/health \
+            /internal/layer4/health; do
+            echo -n "  $path ... "
+            HTTP=$(curl -fsS -o /dev/null -w "%{http_code}" \
+              "${GATEWAY_URL}${path}" \
+              -H "Authorization: Bearer ${{ secrets.STAGING_HEALTH_TOKEN }}" \
+              --connect-timeout 5 || echo "000")
+            echo "HTTP $HTTP"
+          done
+
+      - name: Post deployment summary
+        if: always()
+        run: |
+          echo "## 🚀 Staging Deployment"                                           >> $GITHUB_STEP_SUMMARY
+          echo "| Key | Value |"                                                     >> $GITHUB_STEP_SUMMARY
+          echo "|-----|-------|"                                                     >> $GITHUB_STEP_SUMMARY
+          echo "| Image tag | \`${{ needs.prepare.outputs.image_tag }}\` |"         >> $GITHUB_STEP_SUMMARY
+          echo "| URL | https://staging.ccdt.example.com |"                         >> $GITHUB_STEP_SUMMARY
+          echo "| Namespace | ${{ env.K8S_NAMESPACE }} |"                           >> $GITHUB_STEP_SUMMARY
+          kubectl get pods -n ${{ env.K8S_NAMESPACE }} \
+            --no-headers \
+            -o custom-columns='NAME:.metadata.name,STATUS:.status.phase,READY:.status.containerStatuses[0].ready' \
+            >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
+
+      - name: Slack staging notification
+        if: always()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '✅' || '❌' }} *CCDT Staging Deploy* — `${{ needs.prepare.outputs.image_tag }}`",
+              "blocks": [{
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "${{ job.status == 'success' && '✅ *Staging deploy succeeded*' || '❌ *Staging deploy FAILED*' }}\n*Tag:* `${{ needs.prepare.outputs.image_tag }}`\n*Commit:* ${{ github.event.head_commit.message }}\n*By:* ${{ github.actor }}"
+                }
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  # ── Integration tests against live staging ───────────────────────────────
+  staging-integration:
+    name: Staging Integration Tests
+    runs-on: ubuntu-latest
+    needs: [prepare, deploy-staging]
+    # FIX: guard inputs.skip_smoke with event_name check — inputs is only
+    #      defined when triggered by workflow_dispatch, not by push/tag
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      inputs.skip_smoke != true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install test dependencies
+        run: |
+          pip install --upgrade pip
+          pip install \
+            pytest==8.2.2 \
+            pytest-asyncio==0.23.7 \
+            pytest-timeout==2.3.1 \
+            httpx==0.27.0
+
+      - name: Install shared library
+        run: PYTHONPATH=. pip install -e shared/
+
+      - name: Run health smoke tests against staging
+        env:
+          CCDT_BASE_URL: https://staging.ccdt.example.com
+          CCDT_API_TOKEN: ${{ secrets.STAGING_HEALTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AUTONOMY_MODE: supervised
+        run: |
+          PYTHONPATH=. pytest tests/e2e/test_health_endpoints.py \
+            -v --tb=short \
+            --timeout=120 \
+            -x
+
+  # ── Deploy to Production ──────────────────────────────────────────────────
+  deploy-production:
+    name: Deploy → Production
+    runs-on: ubuntu-latest
+    needs: [prepare, deploy-staging, staging-integration]
+    if: >
+      needs.prepare.outputs.is_release == 'true' ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+    environment:
+      name: production
+      url: https://ccdt.example.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.2
+
+      - name: Configure production kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          kubectl cluster-info
+
+      - name: Add Helm repos
+        run: |
+          helm repo add bitnami              https://charts.bitnami.com/bitnami
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+
+      - name: Helm dependency update
+        working-directory: ${{ env.HELM_CHART }}
+        run: helm dependency update
+
+      - name: Create / update production secrets
+        run: |
+          kubectl create namespace ${{ env.K8S_NAMESPACE }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic ccdt-secrets \
+            --namespace ${{ env.K8S_NAMESPACE }} \
+            --from-literal=anthropic-api-key="${{ secrets.ANTHROPIC_API_KEY }}" \
+            --from-literal=jwt-secret="${{ secrets.JWT_SECRET_PROD }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Pre-deploy health check
+        run: |
+          kubectl get pods -n ${{ env.K8S_NAMESPACE }} --no-headers | \
+            awk '$3 != "Running" && $3 != "Completed" {print "⚠️ Non-Running pod:", $0}'
+
+      - name: Helm upgrade (production — atomic with auto-rollback)
+        run: |
+          helm upgrade --install ${{ env.HELM_RELEASE }} ./${{ env.HELM_CHART }} \
+            --namespace ${{ env.K8S_NAMESPACE }} \
+            --create-namespace \
+            --set global.imageTag=${{ needs.prepare.outputs.image_tag }} \
+            --set global.imageRegistry=${{ env.IMAGE_PREFIX }} \
+            --set global.domain=ccdt.example.com \
+            --set layer3.env.autonomyMode=supervised \
+            --set layer2.replicas=3 \
+            --set layer4.replicas=3 \
+            --set apiGateway.replicas=3 \
+            --set monitoring.serviceMonitor.enabled=true \
+            --values ${{ env.HELM_CHART }}/values.yaml \
+            --atomic \
+            --cleanup-on-fail \
+            --timeout 15m \
+            --wait \
+            --wait-for-jobs
+
+      - name: Wait for full rollout
+        run: |
+          for deploy in \
+            ccdt-layer2-cognitive \
+            ccdt-layer3-guardian \
+            ccdt-layer4-copilot \
+            ccdt-api-gateway \
+            ccdt-dashboard; do
+            kubectl rollout status deployment/$deploy \
+              -n ${{ env.K8S_NAMESPACE }} --timeout=300s
+          done
+          kubectl rollout status daemonset/ccdt-layer1-nervous \
+            -n ${{ env.K8S_NAMESPACE }} --timeout=120s
+
+      - name: Production smoke test (with auto-rollback on failure)
+        run: |
+          GATEWAY_URL="https://ccdt.example.com"
+          for i in $(seq 1 12); do
+            STATUS=$(curl -fsS -o /dev/null -w "%{http_code}" \
+              "${GATEWAY_URL}/health" --connect-timeout 5 || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ Production gateway healthy (attempt $i)"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $STATUS — retrying in 10s ..."
+            sleep 10
+          done
+          echo "❌ Production health check failed — rolling back"
+          helm rollback ${{ env.HELM_RELEASE }} \
+            --namespace ${{ env.K8S_NAMESPACE }} \
+            --wait --timeout 10m
+          exit 1
+
+      - name: Create GitHub Release
+        if: needs.prepare.outputs.is_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.image_tag }}
+          name: "CCDT ${{ needs.prepare.outputs.image_tag }}"
+          generate_release_notes: true
+          body: |
+            ## CCDT Release ${{ needs.prepare.outputs.image_tag }}
+
+            ### Images
+            | Service | Image |
+            |---------|-------|
+            | Layer-1 Nervous   | `${{ env.IMAGE_PREFIX }}/layer1-nervous:${{ needs.prepare.outputs.image_tag }}`   |
+            | Layer-2 Cognitive | `${{ env.IMAGE_PREFIX }}/layer2-cognitive:${{ needs.prepare.outputs.image_tag }}` |
+            | Layer-3 Guardian  | `${{ env.IMAGE_PREFIX }}/layer3-guardian:${{ needs.prepare.outputs.image_tag }}`  |
+            | Layer-4 Co-Pilot  | `${{ env.IMAGE_PREFIX }}/layer4-copilot:${{ needs.prepare.outputs.image_tag }}`  |
+            | API Gateway       | `${{ env.IMAGE_PREFIX }}/api-gateway:${{ needs.prepare.outputs.image_tag }}`     |
+            | Dashboard         | `${{ env.IMAGE_PREFIX }}/dashboard:${{ needs.prepare.outputs.image_tag }}`       |
+
+            ### Quick deploy
+            ```bash
+            helm upgrade --install ccdt oci://ghcr.io/${{ github.repository_owner }}/ccdt-helm \
+              --version ${{ needs.prepare.outputs.image_tag }} \
+              --set global.imageTag=${{ needs.prepare.outputs.image_tag }} \
+              --set secrets.anthropicApiKey=YOUR_KEY
+            ```
+
+      - name: Post production summary
+        if: always()
+        run: |
+          echo "## 🚀 Production Deployment"                                         >> $GITHUB_STEP_SUMMARY
+          echo "| Key | Value |"                                                     >> $GITHUB_STEP_SUMMARY
+          echo "|-----|-------|"                                                     >> $GITHUB_STEP_SUMMARY
+          echo "| Image tag | \`${{ needs.prepare.outputs.image_tag }}\` |"         >> $GITHUB_STEP_SUMMARY
+          echo "| URL | https://ccdt.example.com |"                                 >> $GITHUB_STEP_SUMMARY
+          echo "| Status | ${{ job.status }} |"                                     >> $GITHUB_STEP_SUMMARY
+
+      - name: PagerDuty alert on failed production deploy
+        if: failure()
+        run: |
+          curl -fsSL -X POST \
+            -H "Content-Type: application/json" \
+            -d '{
+              "routing_key": "${{ secrets.PD_ROUTING_KEY }}",
+              "event_action": "trigger",
+              "payload": {
+                "summary": "CCDT Production deploy FAILED — ${{ needs.prepare.outputs.image_tag }}",
+                "severity": "critical",
+                "source": "github-actions",
+                "custom_details": {
+                  "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+                  "actor": "${{ github.actor }}",
+                  "tag": "${{ needs.prepare.outputs.image_tag }}"
+                }
+              }
+            }' \
+            https://events.pagerduty.com/v2/enqueue || true
+
+      - name: Slack production notification
+        if: always()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '🎉' || '🔴' }} *CCDT Production Deploy* — `${{ needs.prepare.outputs.image_tag }}`",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "${{ job.status == 'success' && '🎉 Production Deploy Succeeded' || '🔴 Production Deploy FAILED' }}"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    { "type": "mrkdwn", "text": "*Tag:*\n`${{ needs.prepare.outputs.image_tag }}`" },
+                    { "type": "mrkdwn", "text": "*Status:*\n${{ job.status }}" },
+                    { "type": "mrkdwn", "text": "*Deployed by:*\n${{ github.actor }}" },
+                    { "type": "mrkdwn", "text": "*URL:*\nhttps://ccdt.example.com" }
+                  ]
+                },
+                {
+                  "type": "actions",
+                  "elements": [{
+                    "type": "button",
+                    "text": { "type": "plain_text", "text": "View Run" },
+                    "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                  }]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  # ── Manual rollback ───────────────────────────────────────────────────────
+  rollback:
+    name: Rollback (manual)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' &&
+      inputs.environment != ''
+    environment:
+      name: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.2
+
+      # FIX: GitHub Actions does NOT support dynamic secret lookups (secrets[varName]).
+      # upper() is also not a valid GHA expression function.
+      # Solution: use explicit if: conditions for each environment.
+      - name: Configure kubeconfig (staging)
+        if: inputs.environment == 'staging'
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_STAGING }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          kubectl cluster-info
+
+      - name: Configure kubeconfig (production)
+        if: inputs.environment == 'production'
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          kubectl cluster-info
+
+      - name: Helm rollback
+        run: |
+          echo "Rolling back ${{ env.HELM_RELEASE }} in ${{ inputs.environment }} ..."
+          helm rollback ${{ env.HELM_RELEASE }} \
+            --namespace ${{ env.K8S_NAMESPACE }} \
+            --wait \
+            --timeout 10m
+
+          echo "Rollback complete. Recent history:"
+          helm history ${{ env.HELM_RELEASE }} \
+            --namespace ${{ env.K8S_NAMESPACE }} \
+            --max 5

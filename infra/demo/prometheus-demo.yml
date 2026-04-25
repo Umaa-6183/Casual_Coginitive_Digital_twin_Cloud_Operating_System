@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 10s
+
+scrape_configs:
+  - job_name: demo-nginx
+    static_configs:
+      - targets: [demo-nginx-exporter:9113]
+        labels: {service: nginx, layer: network}
+
+  - job_name: demo-postgres
+    static_configs:
+      - targets: [demo-postgres-exporter:9187]
+        labels: {service: postgres, layer: data}
+
+  - job_name: demo-redis
+    static_configs:
+      - targets: [demo-redis-exporter:9121]
+        labels: {service: redis, layer: data}
+
+  # Scrape cAdvisor for real container CPU/mem from cgroups
+  - job_name: cadvisor
+    static_configs:
+      - targets: [cadvisor:8080]
+        labels: {job: cadvisor}

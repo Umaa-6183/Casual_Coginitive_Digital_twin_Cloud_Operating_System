@@ -1,0 +1,144 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT Event Bus — Kafka Topic: ccdt.gnn.inference
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Purpose:
+#   Carries GNN inference results emitted by the Layer-2 Cognitive Core
+#   every INFER_INTERVAL_S seconds (default 5 s). Each message is a complete
+#   snapshot of the cluster's causal classification — root cause node,
+#   incident type, blast radius, and per-node probabilities.
+#
+# Producers:   layer2-cognitive/inference/server  (singleton)
+# Consumers:   layer3-guardian/executor           (triggers remediation pipeline)
+#              layer4-copilot/copilot             (auto-summary on high-confidence events)
+#              api-gateway                        (dashboard real-time feed)
+#              monitoring                         (Prometheus alerting bridge)
+#
+# Throughput estimate:
+#   1 message every 5 s at steady state → ~17,000 messages/day
+#   Retention: 7 days (needed for incident timeline reconstruction)
+#
+# Message schema (JSON):
+# {
+#   "ts":                  1710000000000,   // Unix ms
+#   "inferenceId":         "inf-abc123",    // Unique inference run ID
+#   "incidentType":        "fault",         // healthy | fault | attack
+#   "rootCauseNode":       "postgres",
+#   "rootCauseConfidence": 0.92,
+#   "blastRadius":         ["order-svc", "postgres", "notify-svc"],
+#   "causalChain": [
+#     { "node": "postgres",  "causalScore": 0.92, "attention": 0.87 },
+#     { "node": "order-svc", "causalScore": 0.84, "attention": 0.71 }
+#   ],
+#   "nodeClassifications": {
+#     "postgres":   { "healthy": 0.03, "fault": 0.93, "attack": 0.04 },
+#     "order-svc":  { "healthy": 0.05, "fault": 0.89, "attack": 0.06 }
+#   },
+#   "graphClassification": { "healthy": 0.02, "fault": 0.94, "attack": 0.04 },
+#   "topFeatures": [
+#     { "node": "postgres", "feature": "oom_kills",   "importance": 0.91 },
+#     { "node": "postgres", "feature": "mem_pct",     "importance": 0.86 }
+#   ],
+#   "modelVersion": "causal_gnn_v1.0",
+#   "inferenceMs":  12.4
+# }
+# ═══════════════════════════════════════════════════════════════════════════════
+
+topic:
+  name: ccdt.gnn.inference
+  # Single partition is sufficient — inference is sequential and ordered.
+  # 3 partitions for parallel consumer group scaling if needed.
+  partitions: 3
+  replication_factor: 3
+
+  config:
+    # 7 days — needed for incident post-mortem timeline reconstruction
+    retention.ms: "604800000"           # 7 days
+    retention.bytes: "5368709120"       # 5 GB total ceiling
+    # Segments roll hourly for efficient time-range queries
+    segment.ms: "3600000"
+    segment.bytes: "536870912"          # 512 MB
+    # GZIP: inference messages are larger JSON (~4 KB) — better compression ratio
+    compression.type: gzip
+    min.insync.replicas: "2"
+    cleanup.policy: delete
+    # Inference messages are larger due to per-node classification maps
+    max.message.bytes: "131072"         # 128 KB
+
+  schema:
+    format: json
+    key:
+      description: "Inference ID (for deduplication)"
+      type: string
+      example: "inf-abc123"
+    value:
+      description: "GNN inference result"
+      required_fields:
+        - ts
+        - inferenceId
+        - incidentType
+        - graphClassification
+        - nodeClassifications
+      optional_fields:
+        - rootCauseNode
+        - rootCauseConfidence
+        - blastRadius
+        - causalChain
+        - topFeatures
+        - modelVersion
+        - inferenceMs
+
+  consumer_groups:
+    - id: ccdt-guardian-trigger
+      description: "Layer-3 Guardian — triggers remediation pipeline on incidents"
+      auto_offset_reset: latest
+      max_poll_records: 10
+      session_timeout_ms: 30000
+      # Guardian must process each message within 5 s to stay current
+      max_poll_interval_ms: 5000
+
+    - id: ccdt-copilot-auto-summary
+      description: "Layer-4 Co-Pilot — auto-generates incident summaries"
+      auto_offset_reset: latest
+      max_poll_records: 5
+      session_timeout_ms: 30000
+
+    - id: ccdt-dashboard-realtime
+      description: "API Gateway dashboard WebSocket push"
+      auto_offset_reset: latest
+      max_poll_records: 10
+      session_timeout_ms: 10000
+
+    - id: ccdt-incident-recorder
+      description: "Incident storage — persists inference results to timeseries DB"
+      auto_offset_reset: earliest    # must not miss any — used for audit trail
+      max_poll_records: 100
+      session_timeout_ms: 60000
+
+  alerts:
+    - name: high_confidence_incident
+      description: "rootCauseConfidence > 0.85 AND incidentType != healthy — page on-call"
+      threshold_confidence: 0.85
+      incident_types:
+        - fault
+        - attack
+
+    - name: attack_detected
+      description: "incidentType = attack — always page on-call immediately"
+      incident_types:
+        - attack
+      priority: critical
+
+    - name: inference_gap
+      description: "No inference message for > 30 s — GNN or Kafka may be down"
+      threshold_silence_ms: 30000
+
+  # Topic creation command:
+  # kafka-topics.sh --create \
+  #   --bootstrap-server kafka:9092 \
+  #   --topic ccdt.gnn.inference \
+  #   --partitions 3 \
+  #   --replication-factor 3 \
+  #   --config retention.ms=604800000 \
+  #   --config compression.type=gzip \
+  #   --config max.message.bytes=131072

@@ -1,0 +1,211 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// CCDT — events.proto  v1.0
+// Protocol Buffer definitions for Layer-1 eBPF telemetry events.
+//
+// Flow:  Layer-1 eBPF Collector ──► Kafka ccdt.ebpf.events ──► Layer-2 GNN
+//
+// Code generation:
+//   protoc --python_out=. --pyi_out=. \
+//          --proto_path=ccdt/shared/proto \
+//          ccdt/shared/proto/events.proto
+// ═══════════════════════════════════════════════════════════════════════════════
+syntax = "proto3";
+
+package ccdt.events;
+
+option go_package   = "github.com/your-org/ccdt/shared/proto/events;eventspb";
+option java_package = "io.ccdt.events";
+
+import "google/protobuf/timestamp.proto";
+
+// ── Enumerations ──────────────────────────────────────────────────────────────
+
+enum LinuxCapability {
+  CAP_UNKNOWN            = 0;
+  CAP_CHOWN              = 1;
+  CAP_DAC_OVERRIDE       = 2;
+  CAP_DAC_READ_SEARCH    = 3;
+  CAP_FOWNER             = 4;
+  CAP_KILL               = 6;
+  CAP_SETGID             = 7;
+  CAP_SETUID             = 8;
+  CAP_NET_ADMIN          = 12;
+  CAP_NET_RAW            = 13;
+  CAP_SYS_CHROOT         = 16;
+  CAP_SYS_MODULE         = 17;
+  CAP_SYS_PTRACE         = 19;
+  CAP_SYS_ADMIN          = 21;
+  CAP_SYS_BOOT           = 22;
+  CAP_SYS_RAWIO          = 23;
+  CAP_SETFCAP            = 31;
+  CAP_MAC_ADMIN          = 33;
+  CAP_BPF                = 39;
+}
+
+enum EventSeverity {
+  SEVERITY_UNKNOWN  = 0;
+  SEVERITY_INFO     = 1;
+  SEVERITY_LOW      = 2;
+  SEVERITY_MEDIUM   = 3;
+  SEVERITY_HIGH     = 4;
+  SEVERITY_CRITICAL = 5;
+}
+
+enum NetworkProtocol {
+  PROTO_UNKNOWN = 0;
+  PROTO_TCP     = 1;
+  PROTO_UDP     = 2;
+  PROTO_ICMP    = 3;
+}
+
+enum SchedEventType {
+  SCHED_UNKNOWN  = 0;
+  SCHED_SWITCH   = 1;
+  SCHED_WAKEUP   = 2;
+  SCHED_MIGRATE  = 3;
+  SCHED_LATENCY  = 4;
+}
+
+// ── Shared metadata ──────────────────────────────────────────────────────────
+
+message EventMetadata {
+  uint64                    kernel_ts_ns    = 1;
+  google.protobuf.Timestamp wall_clock_ts   = 2;
+  string                    node_name       = 3;
+  string                    pod_name        = 4;
+  string                    namespace       = 5;
+  string                    container_id    = 6;
+  string                    container_name  = 7;
+  uint32                    pid             = 8;
+  uint32                    tgid            = 9;
+  uint32                    uid             = 10;
+  uint32                    gid             = 11;
+  string                    comm            = 12;
+  uint32                    ppid            = 13;
+  string                    collector_ver   = 14;
+  EventSeverity             severity        = 15;
+  map<string, string>       labels          = 16;
+}
+
+// ── Event types ───────────────────────────────────────────────────────────────
+
+message CapabilityEvent {
+  EventMetadata   meta          = 1;
+  LinuxCapability capability    = 2;
+  int32           syscall_nr    = 3;
+  bool            allowed       = 4;
+  string          cap_bitmask   = 5;
+  uint64          audit_serial  = 6;
+}
+
+message OomKillEvent {
+  EventMetadata meta              = 1;
+  uint32        victim_pid        = 2;
+  string        victim_comm       = 3;
+  int32         oom_score         = 4;
+  uint64        victim_rss_bytes  = 5;
+  uint64        total_vm_bytes    = 6;
+  uint64        total_rss_bytes   = 7;
+  string        cgroup_path       = 8;
+  uint32        oom_kill_count_5m = 9;
+  uint32        oom_flags         = 10;
+}
+
+message TcpRetransmitEvent {
+  EventMetadata   meta             = 1;
+  string          src_addr         = 2;
+  uint32          src_port         = 3;
+  string          dst_addr         = 4;
+  uint32          dst_port         = 5;
+  NetworkProtocol protocol         = 6;
+  uint32          tcp_state        = 7;
+  uint32          retransmit_count = 8;
+  uint32          rtt_us           = 9;
+  uint32          rto_us           = 10;
+  uint32          snd_cwnd         = 11;
+  uint32          sk_backlog       = 12;
+}
+
+message SchedLatencyEvent {
+  EventMetadata  meta        = 1;
+  SchedEventType event_type  = 2;
+  uint64         latency_us  = 3;
+  uint32         cpu_id      = 4;
+  string         prev_comm   = 5;
+  uint32         prev_pid    = 6;
+  string         next_comm   = 7;
+  uint32         next_pid    = 8;
+  int32          task_prio   = 9;
+  uint64         nvcsw       = 10;
+  uint64         nivcsw      = 11;
+}
+
+message FileAccessEvent {
+  EventMetadata meta        = 1;
+  string        filepath    = 2;
+  uint32        flags       = 3;
+  uint32        mode        = 4;
+  bool          success     = 5;
+  int32         errno_val   = 6;
+  uint64        inode       = 7;
+  string        mount_point = 8;
+  uint64        dev         = 9;
+  string        access_type = 10;
+}
+
+message SyscallEvent {
+  EventMetadata   meta          = 1;
+  int32           syscall_nr    = 2;
+  string          syscall_name  = 3;
+  int64           ret_val       = 4;
+  repeated uint64 args          = 5;
+  bool            is_flagged    = 6;
+  string          flag_reason   = 7;
+}
+
+message ExecveEvent {
+  EventMetadata   meta          = 1;
+  string          filename      = 2;
+  repeated string args          = 3;
+  repeated string env_vars      = 4;
+  bool            is_setuid     = 5;
+  bool            is_setgid     = 6;
+  int32           return_code   = 7;
+  string          binary_hash   = 8;
+  string          interpreter   = 9;
+}
+
+message NetworkConnectEvent {
+  EventMetadata   meta         = 1;
+  string          src_addr     = 2;
+  uint32          src_port     = 3;
+  string          dst_addr     = 4;
+  uint32          dst_port     = 5;
+  NetworkProtocol protocol     = 6;
+  bool            is_outbound  = 7;
+  bool            success      = 8;
+  uint64          bytes_sent   = 9;
+  uint64          bytes_recv   = 10;
+  uint64          duration_ms  = 11;
+  string          dst_hostname = 12;
+}
+
+// ── Batch envelope ────────────────────────────────────────────────────────────
+// One Kafka message = one TypedEbpfBatch (up to 500 events, max 64 KB)
+
+message TypedEbpfBatch {
+  string                      batch_id              = 1;
+  string                      node_name             = 2;
+  string                      collector_id          = 3;
+  google.protobuf.Timestamp   batch_ts              = 4;
+  repeated CapabilityEvent    capability_events     = 5;
+  repeated OomKillEvent       oom_kill_events       = 6;
+  repeated TcpRetransmitEvent tcp_retransmit_events = 7;
+  repeated SchedLatencyEvent  sched_latency_events  = 8;
+  repeated FileAccessEvent    file_access_events    = 9;
+  repeated SyscallEvent       syscall_events        = 10;
+  repeated ExecveEvent        execve_events         = 11;
+  repeated NetworkConnectEvent network_events       = 12;
+  map<string, uint32>         type_counts           = 13;
+  string                      schema_ver            = 14;
+}

@@ -1,0 +1,460 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CCDT Monitoring — Prometheus Deployment + RBAC + ConfigMap + Service
+# ═══════════════════════════════════════════════════════════════════════════════
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    prometheus
+    app.kubernetes.io/part-of: ccdt-platform
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ccdt-prometheus
+  labels:
+    app.kubernetes.io/name:    prometheus
+    app.kubernetes.io/part-of: ccdt-platform
+rules:
+  - apiGroups: [""]
+    resources: [nodes, nodes/proxy, nodes/metrics, services,
+                endpoints, pods, namespaces, configmaps]
+    verbs: [get, list, watch]
+  - apiGroups: [extensions, networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list, watch]
+  - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+    verbs: [get]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ccdt-prometheus
+  labels:
+    app.kubernetes.io/name:    prometheus
+    app.kubernetes.io/part-of: ccdt-platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind:     ClusterRole
+  name:     ccdt-prometheus
+subjects:
+  - kind:      ServiceAccount
+    name:      prometheus
+    namespace: monitoring
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    prometheus
+    app.kubernetes.io/part-of: ccdt-platform
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval:     15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: ccdt-production
+        region:  us-east-1
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ["alertmanager.monitoring.svc.cluster.local:9093"]
+
+    rule_files:
+      - /etc/prometheus/rules/recording.yaml
+      - /etc/prometheus/rules/alerting.yaml
+
+    scrape_configs:
+      - job_name: prometheus
+        static_configs:
+          - targets: ["localhost:9090"]
+
+      - job_name: ccdt-layer1-nervous
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [ccdt]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex:  layer1-nervous
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label:  node
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label:  pod
+          - source_labels: [__address__]
+            action:        replace
+            regex:         (.+):\d+
+            replacement:   $1:9100
+            target_label:  __address__
+        scrape_interval: 10s
+
+      - job_name: ccdt-layer2-cognitive
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [ccdt]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex:  layer2-cognitive
+          - source_labels: [__address__]
+            action:        replace
+            regex:         (.+):\d+
+            replacement:   $1:9090
+            target_label:  __address__
+        scrape_interval: 15s
+
+      - job_name: ccdt-layer3-guardian
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [ccdt]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex:  layer3-guardian
+          - source_labels: [__address__]
+            action:        replace
+            regex:         (.+):\d+
+            replacement:   $1:9090
+            target_label:  __address__
+        scrape_interval: 15s
+
+      - job_name: ccdt-opa
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [ccdt]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex:  layer3-guardian
+          - source_labels: [__address__]
+            action:        replace
+            regex:         (.+):\d+
+            replacement:   $1:8181
+            target_label:  __address__
+        metrics_path: /metrics
+
+      - job_name: ccdt-layer4-copilot
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [ccdt]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex:  layer4-copilot
+          - source_labels: [__address__]
+            action:        replace
+            regex:         (.+):\d+
+            replacement:   $1:9090
+            target_label:  __address__
+        scrape_interval: 15s
+
+      - job_name: kubernetes-nodes-cadvisor
+        scheme: https
+        tls_config:
+          ca_file:              /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex:  __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement:  kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label:  __metrics_path__
+            replacement:   /api/v1/nodes/$1/proxy/metrics/cadvisor
+
+      - job_name: kubernetes-apiservers
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: [default]
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name,
+                            __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex:  kubernetes;https
+
+  recording.yaml: |
+    groups:
+      - name: ccdt_recording
+        interval: 30s
+        rules:
+          - record: ccdt:gnn_inferences:rate1m
+            expr:   rate(ccdt_gnn_inferences_total[1m]) * 60
+          - record: ccdt:guardian_actions:rate5m
+            expr:   rate(ccdt_guardian_actions_total[5m]) * 60
+          - record: ccdt:opa_denial_rate:5m
+            expr: |
+              rate(ccdt_guardian_opa_denials_total[5m])
+              / on() group_left()
+              (rate(ccdt_guardian_actions_total[5m]) + 0.001)
+          - record: ccdt:gnn_latency_p99:5m
+            expr: |
+              histogram_quantile(0.99,
+                rate(ccdt_gnn_inference_duration_seconds_bucket[5m]))
+          - record: ccdt:copilot_tokens_in:rate1m
+            expr: rate(ccdt_copilot_tokens_input_total[1m]) * 60
+          - record: ccdt:copilot_tokens_out:rate1m
+            expr: rate(ccdt_copilot_tokens_output_total[1m]) * 60
+          - record: ccdt:guardian_exec_p99:5m
+            expr: |
+              histogram_quantile(0.99,
+                rate(ccdt_guardian_exec_duration_seconds_bucket[5m]))
+
+  alerting.yaml: |
+    groups:
+      - name: ccdt_incidents
+        rules:
+          - alert: CCDTGNNInferenceSilent
+            expr: |
+              absent(rate(ccdt_gnn_inferences_total[2m]))
+              or rate(ccdt_gnn_inferences_total[2m]) == 0
+            for: 30s
+            labels:
+              severity: critical
+              layer:    layer2
+            annotations:
+              summary:     "GNN inference silent for > 30 s"
+              description: "No GNN inference events — Layer-2 Cognitive Core may be down."
+              runbook:     "https://wiki.ccdt.internal/runbooks/gnn-silent"
+
+          - alert: CCDTOPADenialRateHigh
+            expr:  ccdt:opa_denial_rate:5m > 0.30
+            for:   2m
+            labels:
+              severity: warning
+              layer:    layer3
+            annotations:
+              summary:     "OPA denial rate {{ $value | humanizePercentage }} > 30%"
+              description: "High OPA denial rate may indicate policy misconfiguration."
+
+          - alert: CCDTGuardianDown
+            expr: |
+              kube_deployment_status_replicas_ready{
+                deployment="layer3-guardian",namespace="ccdt"} < 1
+            for: 1m
+            labels:
+              severity: critical
+              layer:    layer3
+            annotations:
+              summary: "Guardian is down — autonomous remediation DISABLED"
+
+          - alert: CCDTGNNReplicasLow
+            expr: |
+              kube_deployment_status_replicas_ready{
+                deployment="layer2-cognitive",namespace="ccdt"} < 1
+            for: 2m
+            labels:
+              severity: critical
+              layer:    layer2
+            annotations:
+              summary: "Layer-2 GNN has 0 ready replicas"
+
+          - alert: CCDTGuardianExecutionFailures
+            expr: |
+              increase(ccdt_guardian_actions_total{status="execution_failed"}[5m]) > 3
+            for: 1m
+            labels:
+              severity: warning
+              layer:    layer3
+            annotations:
+              summary:     "{{ $value }} Guardian K8s execution failures in 5 min"
+              description: "K8s API may be degraded. Check api-server health."
+
+          - alert: CCDTCoPilotLatencyHigh
+            expr: |
+              histogram_quantile(0.95,
+                rate(ccdt_copilot_latency_seconds_bucket[5m])) > 15
+            for: 5m
+            labels:
+              severity: warning
+              layer:    layer4
+            annotations:
+              summary:     "Co-Pilot P95 latency {{ $value | humanizeDuration }} > 15 s"
+              description: "Claude API latency is elevated. Check api.anthropic.com status."
+
+          - alert: CCDTPodCrashLooping
+            expr: |
+              rate(kube_pod_container_status_restarts_total{namespace="ccdt"}[15m]) * 900 > 3
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary:     "Pod {{ $labels.pod }} crash-looping"
+              description: "Container {{ $labels.container }} restarting frequently."
+
+          - alert: CCDTNodeDiskPressure
+            expr: |
+              (node_filesystem_avail_bytes{mountpoint="/",fstype!="tmpfs"}
+               / node_filesystem_size_bytes{mountpoint="/",fstype!="tmpfs"}) < 0.10
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary:     "Node {{ $labels.instance }} disk < 10% free"
+              description: "Available: {{ $value | humanizePercentage }}"
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    prometheus
+    app.kubernetes.io/part-of: ccdt-platform
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    prometheus
+    app.kubernetes.io/part-of: ccdt-platform
+  annotations:
+    description: "CCDT Prometheus metrics collector"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  strategy:
+    type: Recreate
+
+  template:
+    metadata:
+      labels:
+        app:                       prometheus
+        app.kubernetes.io/name:    prometheus
+        app.kubernetes.io/part-of: ccdt-platform
+
+    spec:
+      serviceAccountName: prometheus
+
+      securityContext:
+        fsGroup:    65534
+        runAsUser:  65534
+        runAsGroup: 65534
+
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.53.0
+          imagePullPolicy: IfNotPresent
+
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=30d
+            - --storage.tsdb.retention.size=40GB
+            - --web.console.libraries=/etc/prometheus/console_libraries
+            - --web.console.templates=/etc/prometheus/consoles
+            - --web.enable-lifecycle
+            - --web.enable-admin-api
+            - --log.level=info
+
+          ports:
+            - name:          http
+              containerPort: 9090
+              protocol:      TCP
+
+          volumeMounts:
+            - name:      prometheus-config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath:   prometheus.yml
+            - name:      prometheus-config
+              mountPath: /etc/prometheus/rules/recording.yaml
+              subPath:   recording.yaml
+            - name:      prometheus-config
+              mountPath: /etc/prometheus/rules/alerting.yaml
+              subPath:   alerting.yaml
+            - name:      prometheus-data
+              mountPath: /prometheus
+
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9090
+            initialDelaySeconds: 30
+            periodSeconds:       15
+            failureThreshold:    3
+            timeoutSeconds:      10
+
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds:       10
+            failureThreshold:    3
+
+          resources:
+            requests:
+              cpu:    "500m"
+              memory: "2Gi"
+            limits:
+              cpu:    "2000m"
+              memory: "8Gi"
+
+          securityContext:
+            runAsNonRoot:             true
+            runAsUser:                65534
+            readOnlyRootFilesystem:   false
+            allowPrivilegeEscalation: false
+
+      terminationGracePeriodSeconds: 60
+
+      volumes:
+        - name: prometheus-config
+          configMap:
+            name: prometheus-config
+        - name: prometheus-data
+          persistentVolumeClaim:
+            claimName: prometheus-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name:    prometheus
+    app.kubernetes.io/part-of: ccdt-platform
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - name:       http
+      port:       9090
+      targetPort: http
+      protocol:   TCP
+  type: ClusterIP

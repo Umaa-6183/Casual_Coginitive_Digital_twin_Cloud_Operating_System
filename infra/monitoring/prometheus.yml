@@ -1,0 +1,133 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# CCDT — Prometheus Scrape Configuration
+# ══════════════════════════════════════════════════════════════════════════════
+# Used by: docker-compose --profile monitoring AND infra/kubernetes/monitoring/
+
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: ccdt-local
+    environment: development
+
+# ── Alerting ──────────────────────────────────────────────────────────────────
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []  # Set to alertmanager:9093 when using K8s
+
+# ── Rule files ────────────────────────────────────────────────────────────────
+rule_files: []
+
+# ── Scrape configs ────────────────────────────────────────────────────────────
+scrape_configs:
+
+  # Prometheus self-monitoring
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]
+
+  # ── Layer-2: GNN Inference Server ──────────────────────────────────────────
+  - job_name: ccdt-layer2-gnn
+    scrape_interval: 10s
+    metrics_path: /metrics
+    static_configs:
+      - targets: [layer2-gnn:8001]
+        labels:
+          service: layer2-gnn
+          layer: "2"
+          component: cognitive
+
+  # ── Layer-3: Guardian ──────────────────────────────────────────────────────
+  - job_name: ccdt-layer3-guardian
+    scrape_interval: 10s
+    metrics_path: /metrics
+    static_configs:
+      - targets: [layer3-guardian:8002]
+        labels:
+          service: layer3-guardian
+          layer: "3"
+          component: guardian
+
+  # ── Layer-4: Co-Pilot ──────────────────────────────────────────────────────
+  - job_name: ccdt-layer4-copilot
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets: [layer4-copilot:8003]
+        labels:
+          service: layer4-copilot
+          layer: "4"
+          component: copilot
+
+  # ── API Gateway ────────────────────────────────────────────────────────────
+  - job_name: ccdt-api-gateway
+    scrape_interval: 10s
+    metrics_path: /metrics
+    static_configs:
+      - targets: [api-gateway:8000]
+        labels:
+          service: api-gateway
+          component: gateway
+
+  # ── Kafka (via JMX exporter or kafka-exporter) ─────────────────────────────
+  # Uncomment if you add kafka-exporter to docker-compose
+  # - job_name: kafka
+  #   static_configs:
+  #     - targets: [kafka-exporter:9308]
+  #       labels:
+  #         service: kafka
+
+  # ── Redis (via redis-exporter) ─────────────────────────────────────────────
+  # Uncomment if you add redis-exporter to docker-compose
+  # - job_name: redis
+  #   static_configs:
+  #     - targets: [redis-exporter:9121]
+  #       labels:
+  #         service: redis
+
+  # ── OPA ────────────────────────────────────────────────────────────────────
+  - job_name: opa
+    scrape_interval: 30s
+    metrics_path: /metrics
+    static_configs:
+      - targets: [opa:8181]
+        labels:
+          service: opa
+          component: policy
+
+  # ── cAdvisor — real container cgroup metrics ────────────────────────────────
+  - job_name: cadvisor
+    scrape_interval: 10s
+    static_configs:
+      - targets: [cadvisor:8080]
+        labels:
+          job: cadvisor
+
+  # ── Demo service exporters ──────────────────────────────────────────────────
+  - job_name: demo-postgres
+    scrape_interval: 10s
+    static_configs:
+      - targets: [demo-postgres-exporter:9187]
+        labels:
+          service: postgres
+          layer: data
+          environment: demo
+
+  - job_name: demo-redis
+    scrape_interval: 10s
+    static_configs:
+      - targets: [demo-redis-exporter:9121]
+        labels:
+          service: redis
+          layer: data
+          environment: demo
+
+  - job_name: demo-nginx
+    scrape_interval: 10s
+    static_configs:
+      - targets: [demo-nginx-exporter:9113]
+        labels:
+          service: nginx
+          layer: network
+          environment: demo

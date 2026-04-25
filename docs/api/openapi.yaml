@@ -1,0 +1,712 @@
+openapi: "3.1.0"
+info:
+  title: CCDT API Gateway
+  version: "1.0.0"
+  description: |
+    **Cognitive Digital Twin (CCDT)** REST API.
+
+    The API Gateway is the single entry point for all operator and dashboard interactions.
+    It proxies requests to the appropriate downstream service (Layer-2, Layer-3, Layer-4).
+
+    ## Authentication
+    All endpoints require a JWT Bearer token (`Authorization: Bearer <token>`).
+    Tokens are issued by your configured IdP (Okta / Google Workspace).
+
+    ## Rate Limits
+    - `/chat` endpoints: 60 req/min per operator
+    - `/actions` endpoints: 20 req/min per operator
+    - All others: 120 req/min
+
+  contact:
+    name: CCDT Platform Engineering
+    email: platform@yourcompany.com
+  license:
+    name: Apache 2.0
+
+servers:
+  - url: https://ccdt.internal.yourcompany.com/api/v1
+    description: Production
+  - url: https://ccdt-staging.internal.yourcompany.com/api/v1
+    description: Staging
+  - url: http://localhost:8000/api/v1
+    description: Local development
+
+security:
+  - BearerAuth: []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tags
+# ─────────────────────────────────────────────────────────────────────────────
+tags:
+  - name: topology
+    description: Cluster topology and GNN inference results (Layer-2)
+  - name: incidents
+    description: Incident lifecycle management
+  - name: actions
+    description: Guardian remediation actions (Layer-3)
+  - name: copilot
+    description: AI Co-Pilot chat interface (Layer-4)
+  - name: events
+    description: Raw eBPF event queries (Layer-1)
+  - name: health
+    description: Service health and readiness probes
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Paths
+# ─────────────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── Topology ────────────────────────────────────────────────────────────────
+  /topology:
+    get:
+      tags: [topology]
+      summary: Get current cluster topology
+      description: |
+        Returns the current Kubernetes service topology including node classifications
+        (HEALTHY / FAULT / ATTACK), anomaly scores, and recent GNN inference result.
+      parameters:
+        - name: namespace
+          in: query
+          schema: { type: string }
+          description: Filter by namespace (default: all)
+        - name: include_healthy
+          in: query
+          schema: { type: boolean, default: true }
+          description: Include healthy nodes in response
+      responses:
+        "200":
+          description: Current topology snapshot
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TopologyResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /topology/inference/latest:
+    get:
+      tags: [topology]
+      summary: Get most recent GNN inference result
+      responses:
+        "200":
+          description: Latest inference result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InferenceResult" }
+        "404":
+          description: No inference available yet
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /topology/inference/{inference_id}:
+    get:
+      tags: [topology]
+      summary: Get a specific GNN inference result by ID
+      parameters:
+        - name: inference_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Inference result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InferenceResult" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ── Incidents ────────────────────────────────────────────────────────────────
+  /incidents:
+    get:
+      tags: [incidents]
+      summary: List incidents
+      parameters:
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [DETECTING, ACTIVE, REMEDIATING, RESOLVED, FALSE_POSITIVE]
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [LOW, MEDIUM, HIGH, CRITICAL]
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+          description: Return incidents detected after this timestamp
+      responses:
+        "200":
+          description: Paginated incident list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  incidents:
+                    type: array
+                    items: { $ref: "#/components/schemas/Incident" }
+                  total_count: { type: integer }
+                  offset: { type: integer }
+
+  /incidents/{incident_id}:
+    get:
+      tags: [incidents]
+      summary: Get incident details including timeline and actions taken
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Full incident record
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncidentDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+    patch:
+      tags: [incidents]
+      summary: Update incident (e.g., mark as false positive)
+      parameters:
+        - name: incident_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                state:
+                  type: string
+                  enum: [RESOLVED, FALSE_POSITIVE]
+                operator_notes: { type: string }
+      responses:
+        "200":
+          description: Updated incident
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Incident" }
+
+  # ── Actions ──────────────────────────────────────────────────────────────────
+  /actions/preview:
+    post:
+      tags: [actions]
+      summary: Ghost Preview — simulate an action without executing it
+      description: |
+        Runs the action through the Ghost Preview simulation sandbox.
+        Returns risk score, blast radius, MTTR estimate, and OPA evaluation result.
+        Does NOT execute any Kubernetes API calls.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActionPreviewRequest" }
+      responses:
+        "200":
+          description: Ghost Preview result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GhostPreviewResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /actions/execute:
+    post:
+      tags: [actions]
+      summary: Execute a remediation action
+      description: |
+        Runs full pipeline: Ghost Preview → OPA evaluation → Kubernetes execution.
+        Requires appropriate autonomy mode or explicit operator approval.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActionExecuteRequest" }
+      responses:
+        "200":
+          description: Action result (may be SUCCEEDED, FAILED, AWAITING_APPROVAL)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActionResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403":
+          description: Action blocked by OPA policy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OpaViolation" }
+
+  /actions/approve/{audit_id}:
+    post:
+      tags: [actions]
+      summary: Approve or deny a pending action (human-in-loop)
+      parameters:
+        - name: audit_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [approve, deny]
+                reason: { type: string }
+      responses:
+        "200":
+          description: Approval decision recorded; action may execute
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActionResult" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Action already approved/denied
+
+  /actions/history:
+    get:
+      tags: [actions]
+      summary: List recent remediation actions
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 500 }
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [SUCCEEDED, FAILED, DENIED, AWAITING_APPROVAL]
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Action history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries: { type: array, items: { $ref: "#/components/schemas/ActionResult" } }
+                  total_count: { type: integer }
+
+  # ── Co-Pilot ─────────────────────────────────────────────────────────────────
+  /chat:
+    post:
+      tags: [copilot]
+      summary: Send a chat message to the AI Co-Pilot (non-streaming)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatRequest" }
+      responses:
+        "200":
+          description: Co-Pilot response
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatResponse" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /chat/stream:
+    post:
+      tags: [copilot]
+      summary: Send a chat message to the AI Co-Pilot (SSE streaming)
+      description: |
+        Returns a Server-Sent Event stream. Each event is a JSON object:
+        ```
+        data: {"event_type": 1, "delta_text": "Based on", "seq_num": 1}
+        data: {"event_type": 1, "delta_text": " the GNN analysis", "seq_num": 2}
+        data: {"event_type": 3, "final_usage": {"input_tokens": 450, "output_tokens": 120}}
+        ```
+        event_type: 1=TOKEN, 2=TOOL_CALL, 3=COMPLETE, 4=ERROR
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatRequest" }
+      responses:
+        "200":
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+  /chat/sessions:
+    get:
+      tags: [copilot]
+      summary: List active Co-Pilot sessions
+      responses:
+        "200":
+          description: Session list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/Session" }
+
+  /chat/sessions/{session_id}:
+    delete:
+      tags: [copilot]
+      summary: Close and clear a Co-Pilot session
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Session closed }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /report:
+    post:
+      tags: [copilot]
+      summary: Generate a structured incident report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [incident_id]
+              properties:
+                incident_id: { type: string, format: uuid }
+                format:
+                  type: string
+                  enum: [markdown, json]
+                  default: markdown
+      responses:
+        "200":
+          description: Incident report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncidentReport" }
+
+  # ── eBPF Events ──────────────────────────────────────────────────────────────
+  /events:
+    get:
+      tags: [events]
+      summary: Query recent eBPF events
+      parameters:
+        - name: pod_name
+          in: query
+          schema: { type: string }
+        - name: namespace
+          in: query
+          schema: { type: string }
+        - name: node_name
+          in: query
+          schema: { type: string }
+        - name: event_type
+          in: query
+          schema:
+            type: string
+            enum: [capability, oom_kill, tcp_retransmit, sched_latency, file_access, syscall, execve, network]
+        - name: severity
+          in: query
+          schema: { type: string, enum: [INFO, LOW, MEDIUM, HIGH, CRITICAL] }
+        - name: tail_lines
+          in: query
+          schema: { type: integer, default: 50, maximum: 1000 }
+        - name: since_seconds
+          in: query
+          schema: { type: integer, default: 300 }
+          description: Return events from the last N seconds
+      responses:
+        "200":
+          description: Recent eBPF events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events: { type: array, items: { type: object } }
+                  total_count: { type: integer }
+                  from_ts: { type: string, format: date-time }
+
+  # ── Health ───────────────────────────────────────────────────────────────────
+  /health:
+    get:
+      tags: [health]
+      summary: API Gateway liveness probe
+      security: []
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [healthy] }
+                  version: { type: string }
+                  uptime_seconds: { type: number }
+
+  /health/deep:
+    get:
+      tags: [health]
+      summary: Deep health check — checks all upstream services
+      responses:
+        "200":
+          description: All services healthy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeepHealthResponse" }
+        "503":
+          description: One or more services degraded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeepHealthResponse" }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Components
+# ─────────────────────────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: Invalid request body
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ServiceUnavailable:
+      description: Upstream service unavailable
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        detail: { type: string }
+        code: { type: string }
+        request_id: { type: string }
+
+    OpaViolation:
+      type: object
+      properties:
+        detail: { type: string }
+        violations: { type: array, items: { type: string } }
+        risk_score: { type: number }
+
+    TopologyResponse:
+      type: object
+      properties:
+        snapshot_id: { type: string, format: uuid }
+        timestamp: { type: string, format: date-time }
+        node_count: { type: integer }
+        edge_count: { type: integer }
+        incident_type: { type: string }
+        cluster_name: { type: string }
+        nodes:
+          type: array
+          items: { $ref: "#/components/schemas/TopologyNode" }
+
+    TopologyNode:
+      type: object
+      properties:
+        node_id: { type: string }
+        name: { type: string }
+        node_type: { type: string }
+        namespace: { type: string }
+        node_class:
+          type: string
+          enum: [healthy, fault, attack, unknown]
+        class_confidence: { type: number }
+        is_root_cause: { type: boolean }
+        anomaly_score: { type: number }
+        features: { type: object }
+
+    InferenceResult:
+      type: object
+      properties:
+        inference_id: { type: string, format: uuid }
+        timestamp: { type: string, format: date-time }
+        incident_type: { type: string }
+        graph_confidence: { type: number }
+        severity: { type: string, enum: [none, low, medium, high, critical] }
+        root_cause_node_name: { type: string }
+        root_cause_confidence: { type: number }
+        blast_radius_count: { type: integer }
+        nl_summary: { type: string }
+        inference_latency_ms: { type: number }
+        is_heartbeat: { type: boolean }
+
+    Incident:
+      type: object
+      properties:
+        incident_id: { type: string, format: uuid }
+        detected_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time, nullable: true }
+        state: { type: string }
+        severity: { type: string }
+        incident_type: { type: string }
+        root_cause_service: { type: string }
+        graph_confidence: { type: number }
+        blast_radius_count: { type: integer }
+        mttr_seconds: { type: number, nullable: true }
+        nl_summary: { type: string }
+
+    IncidentDetail:
+      allOf:
+        - { $ref: "#/components/schemas/Incident" }
+        - type: object
+          properties:
+            timeline:
+              type: array
+              items: { type: object }
+            actions_taken:
+              type: array
+              items: { $ref: "#/components/schemas/ActionResult" }
+            top_features:
+              type: array
+              items: { type: object }
+
+    ActionPreviewRequest:
+      type: object
+      required: [action_name, target_node_name, target_namespace]
+      properties:
+        action_name: { type: string }
+        target_node_name: { type: string }
+        target_namespace: { type: string }
+        inference_id: { type: string, format: uuid }
+        parameters: { type: object }
+
+    ActionExecuteRequest:
+      allOf:
+        - { $ref: "#/components/schemas/ActionPreviewRequest" }
+        - type: object
+          properties:
+            force: { type: boolean, default: false, description: Skip human approval (requires admin role) }
+
+    GhostPreviewResult:
+      type: object
+      properties:
+        risk_score: { type: number }
+        risk_category: { type: string, enum: [VERY_LOW, LOW, MEDIUM, HIGH, VERY_HIGH] }
+        confidence: { type: number }
+        opa_approved: { type: boolean }
+        opa_violations: { type: array, items: { type: string } }
+        affected_pod_count: { type: integer }
+        mttr_delta_seconds: { type: number }
+        traffic_impact_pct: { type: number }
+        dry_run_succeeded: { type: boolean }
+        projected_status: { type: string }
+
+    ActionResult:
+      type: object
+      properties:
+        audit_id: { type: string, format: uuid }
+        status: { type: string }
+        message: { type: string }
+        error_detail: { type: string, nullable: true }
+        action_name: { type: string }
+        target_node_name: { type: string }
+        execution_duration_ms: { type: number }
+        verified_effect: { type: boolean }
+        post_action_health: { type: number }
+        approved_by: { type: string }
+        risk_score: { type: number }
+
+    ChatRequest:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }
+        session_id:
+          type: string
+          format: uuid
+          description: Omit to create a new session
+        incident_id:
+          type: string
+          format: uuid
+          description: Associate this conversation with an incident
+
+    ChatResponse:
+      type: object
+      properties:
+        session_id: { type: string, format: uuid }
+        message_id: { type: string, format: uuid }
+        content: { type: string }
+        model: { type: string }
+        stop_reason: { type: string }
+        token_usage: { $ref: "#/components/schemas/TokenUsage" }
+        tool_calls: { type: array, items: { type: object } }
+
+    Session:
+      type: object
+      properties:
+        session_id: { type: string, format: uuid }
+        operator_id: { type: string }
+        state: { type: string }
+        turn_count: { type: integer }
+        created_at: { type: string, format: date-time }
+        last_activity_at: { type: string, format: date-time }
+        total_token_usage: { $ref: "#/components/schemas/TokenUsage" }
+
+    IncidentReport:
+      type: object
+      properties:
+        report_id: { type: string, format: uuid }
+        incident_id: { type: string, format: uuid }
+        generated_at: { type: string, format: date-time }
+        format: { type: string }
+        content: { type: string }
+
+    TokenUsage:
+      type: object
+      properties:
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        estimated_cost_usd: { type: number }
+
+    DeepHealthResponse:
+      type: object
+      properties:
+        overall_status: { type: string, enum: [healthy, degraded, unhealthy] }
+        services:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status: { type: string }
+              latency_ms: { type: number }
+              error: { type: string, nullable: true }
