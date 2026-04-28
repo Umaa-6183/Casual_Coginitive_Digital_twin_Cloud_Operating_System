@@ -330,7 +330,7 @@ class CCDTCoPilot:
             if isinstance(content, str) and content:
                 history.append(
                     gtypes.Content(role=role, parts=[
-                                   gtypes.Part.from_text(content)])
+                                   gtypes.Part.from_text(text=content)])
                 )
         return history
 

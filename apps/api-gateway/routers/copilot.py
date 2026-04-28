@@ -1,11 +1,10 @@
 """
 CCDT API Gateway — Co-Pilot Router
 Routes chat requests to Layer-4 Co-Pilot service.
-No canned responses — all requests go directly to Layer-4.
+No canned responses — all requests proxy directly to Layer-4.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -24,7 +23,8 @@ logger = logging.getLogger("ccdt.routers.copilot")
 router = APIRouter(prefix="/api/v1", tags=["copilot"])
 
 COPILOT_SERVICE_URL = os.getenv(
-    "COPILOT_SERVICE_URL", "http://layer4-copilot:8003")
+    "COPILOT_SERVICE_URL", "http://layer4-copilot:8003"
+)
 
 
 class ChatRequest(BaseModel):
@@ -54,6 +54,18 @@ async def _proxy_stream(
     message:    str,
     context:    dict[str, Any],
 ) -> AsyncGenerator[str, None]:
+    """
+    Forward a streaming chat request to Layer-4 and pass frames through verbatim.
+
+    Layer-4 emits JSON-framed SSE lines:
+        data: {"type": "tool_call",  "tool": "get_topology"}
+        data: {"type": "text_delta", "text": "word "}
+        data: {"type": "done",       "usage": {...}}
+        data: {"type": "error",      "message": "..."}
+
+    We pass all frames through unchanged so the Dashboard always receives
+    consistently-structured JSON frames.
+    """
     history = _SESSIONS[session_id]
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -69,18 +81,40 @@ async def _proxy_stream(
             ) as resp:
                 if resp.status_code != 200:
                     error_body = await resp.aread()
-                    yield f'data: {json.dumps({"type":"error","message":f"Layer-4 error {resp.status_code}: {error_body.decode()[:200]}"})}\n\n'
+                    # Build JSON outside f-string — nested {} in f-strings
+                    # requires Python 3.12+; containers run 3.11.
+                    err_frame = json.dumps({
+                        "type":    "error",
+                        "message": f"Layer-4 returned {resp.status_code}: "
+                                   + error_body.decode()[:200],
+                    })
+                    yield f"data: {err_frame}\n\n"
                     return
+
                 async for line in resp.aiter_lines():
-                    if line.startswith("data: "):
-                        yield line + "\n\n"
-                        if line == "data: [DONE]":
+                    if not line.startswith("data: "):
+                        continue
+
+                    yield line + "\n\n"
+
+                    # FIX: Layer-4 sends {"type":"done",...} as the terminal frame,
+                    # NOT the literal string "[DONE]". Parse the JSON payload to
+                    # detect termination correctly.
+                    try:
+                        payload = json.loads(line[6:])
+                        if payload.get("type") == "done":
                             return
+                    except (json.JSONDecodeError, AttributeError):
+                        pass  # non-JSON lines are silently skipped
+
     except httpx.ConnectError as exc:
-        yield f'data: {json.dumps({"type":"error","message":f"Co-Pilot service unreachable: {exc}"})}\n\n'
+        yield f'data: {json.dumps({"type": "error", "message": f"Co-Pilot unreachable: {exc}"})}\n\n'
     except Exception as exc:
         logger.error("Proxy stream error: %s", exc)
-        yield f'data: {json.dumps({"type":"error","message":str(exc)})}\n\n'
+        yield f'data: {json.dumps({"type": "error", "message": str(exc)})}\n\n'
+
+    # Always emit a done frame so the Dashboard doesn't hang waiting
+    yield f'data: {json.dumps({"type": "done", "usage": {"input_tokens": 0, "output_tokens": 0}})}\n\n'
 
 
 @router.post("/copilot/chat")
@@ -90,40 +124,68 @@ async def copilot_chat(body: ChatRequest, request: Request):
 
     if body.stream:
         async def event_generator():
-            assistant_reply_parts = []
+            assistant_parts: list[str] = []
+
             async for chunk in _proxy_stream(session_id, body.message, body.context):
-                if chunk.startswith("data: ") and "data: [DONE]" not in chunk:
-                    assistant_reply_parts.append(chunk[6:].strip())
                 yield chunk
-            if assistant_reply_parts:
+
+                # FIX: extract only the actual text from text_delta frames for
+                # session history. The old code did chunk[6:].strip() which
+                # stored raw JSON like '{"type":"text_delta","text":"word "}'
+                # instead of just 'word '.
+                if chunk.startswith("data: "):
+                    try:
+                        payload = json.loads(chunk[6:])
+                        if payload.get("type") == "text_delta":
+                            assistant_parts.append(payload.get("text", ""))
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
+
+            if assistant_parts:
                 _append_history(session_id, "assistant",
-                                "".join(assistant_reply_parts))
+                                "".join(assistant_parts))
 
         return StreamingResponse(
             event_generator(),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            headers={
+                "Cache-Control":  "no-cache",
+                "X-Accel-Buffering": "no",
+            },
         )
 
     else:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{COPILOT_SERVICE_URL}/chat",
-                json={
-                    "session_id": session_id,
-                    "message":    body.message,
-                    "history":    _SESSIONS[session_id],
-                    "context":    body.context,
-                },
-            )
-            if resp.status_code != 200:
-                raise HTTPException(
-                    status_code=500, detail=f"Layer-4 error: {resp.text}")
-            data = resp.json()
-            reply = data.get("reply", "")
+        # Synchronous JSON path
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"{COPILOT_SERVICE_URL}/chat",
+                    json={
+                        "session_id": session_id,
+                        "message":    body.message,
+                        "history":    _SESSIONS[session_id],
+                        "context":    body.context,
+                    },
+                )
+                if resp.status_code != 200:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Layer-4 error {resp.status_code}: {resp.text[:200]}",
+                    )
+                data = resp.json()
+                reply = data.get("reply", "")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("Sync chat proxy error: %s", exc)
+            raise HTTPException(status_code=503, detail=str(exc))
 
         _append_history(session_id, "assistant", reply)
-        return JSONResponse({"session_id": session_id, "reply": reply, "timestamp": int(time.time())})
+        return JSONResponse({
+            "session_id": session_id,
+            "reply":      reply,
+            "timestamp":  int(time.time()),
+        })
 
 
 @router.post("/copilot/report")
@@ -131,21 +193,29 @@ async def generate_report(body: ReportRequest):
     prompt = f"Generate a full incident report for incident {body.incident_id}."
     session_id = f"report-{body.incident_id}-{int(time.time())}"
 
-    async with httpx.AsyncClient(timeout=45.0) as client:
-        resp = await client.post(
-            f"{COPILOT_SERVICE_URL}/chat",
-            json={
-                "session_id": session_id,
-                "message":    prompt,
-                "history":    [],
-                "context":    {"incident_id": body.incident_id, "format": body.format},
-            },
-        )
-        if resp.status_code != 200:
-            raise HTTPException(
-                status_code=500, detail=f"Report failed: {resp.text}")
-        data = resp.json()
-        report = data.get("reply", "")
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            resp = await client.post(
+                f"{COPILOT_SERVICE_URL}/chat",
+                json={
+                    "session_id": session_id,
+                    "message":    prompt,
+                    "history":    [],
+                    "context":    {"incident_id": body.incident_id, "format": body.format},
+                },
+            )
+            if resp.status_code != 200:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Report failed: {resp.text[:200]}",
+                )
+            data = resp.json()
+            report = data.get("reply", "")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Report generation error: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc))
 
     return JSONResponse({
         "incident_id":  body.incident_id,
@@ -158,8 +228,11 @@ async def generate_report(body: ReportRequest):
 @router.get("/copilot/sessions")
 async def list_sessions():
     return JSONResponse({
-        "sessions": [{"session_id": sid, "turns": len(hist)} for sid, hist in _SESSIONS.items()],
-        "total":    len(_SESSIONS),
+        "sessions": [
+            {"session_id": sid, "turns": len(hist)}
+            for sid, hist in _SESSIONS.items()
+        ],
+        "total": len(_SESSIONS),
     })
 
 

@@ -3,24 +3,17 @@ CCDT Layer-4 Co-Pilot — Cluster Context Builder
 ════════════════════════════════════════════════════════════════════════════════
 Assembles a rich, LLM-ready context string from all CCDT data sources:
 
-  Source          Endpoint / method              Cache TTL
+  Source           Endpoint / method              Cache TTL
   ────────────────────────────────────────────────────────
-  GNN inference   POST /infer (Layer-2)          3 s
-  GNN topology    GET  /topology (Layer-2)        10 s
-  Guardian state  GET  /actions/history (L3)      5 s
-  eBPF live       GET  /events?limit=20 (L1)      2 s
-  Active incidents GET  /api/v1/incidents (GW)    5 s
-  Counterfactual  (injected per request)          —
+  GNN inference    POST /infer (Layer-2)           3 s
+  GNN topology     GET  /topology (Layer-2)        10 s
+  Guardian state   GET  /actions/history (L3)      5 s
+  eBPF live        GET  /events?limit=50 (L1)      2 s
+  Active incidents GET  /api/v1/incidents (GW)     5 s
+  Counterfactual   (injected per request)          —
 
-The resulting context is injected into every Claude API call as a system
-prompt addendum, keeping Claude grounded in real-time cluster reality.
-
-Context sections:
-  [INCIDENT OVERVIEW]   severity, type, elapsed, blast radius
-  [CAUSAL GNN]          root cause, confidence, per-node classification
-  [eBPF TELEMETRY]      top anomalous signals (cap, OOM, TCP, sched)
-  [GUARDIAN STATUS]     recent actions, OPA decisions, pending approvals
-  [TOPOLOGY SNAPSHOT]   node statuses in tabular form
+build_context() returns a dict that includes BOTH structured data fields
+AND a pre-formatted "context_text" string ready for LLM prompt injection.
 """
 from __future__ import annotations
 
@@ -43,7 +36,7 @@ API_GW_URL = os.getenv("API_GATEWAY_URL",      "http://api-gateway:8000")
 
 HTTP_TIMEOUT = float(os.getenv("CONTEXT_FETCH_TIMEOUT_S", "3.0"))
 
-CLASS_EMOJI = {"healthy": "✅", "fault": "⚠️", "attack": "🚨"}
+CLASS_EMOJI = {"healthy": "✅", "fault": "⚠️",  "attack": "🚨"}
 STATUS_EMOJI = {"healthy": "✅", "warning": "⚠️", "critical": "🔴"}
 
 
@@ -70,9 +63,9 @@ class ClusterContextBuilder:
     Fetches and formats real-time cluster state for LLM context injection.
 
     Usage:
-        builder = ClusterContextBuilder()
-        context_str = await builder.build_context()
-        # → inject into Claude system prompt
+        builder      = ClusterContextBuilder()
+        ctx          = await builder.build_context()
+        context_text = ctx["context_text"]   # inject into Gemini prompt
     """
 
     def __init__(self) -> None:
@@ -84,14 +77,25 @@ class ClusterContextBuilder:
 
     async def build_context(
         self,
-        include_topology:    bool = True,
-        include_ebpf:        bool = True,
-        include_guardian:    bool = True,
-        include_incidents:   bool = True,
-        extra_context:       Optional[str] = None,
+        include_topology:  bool = True,
+        include_ebpf:      bool = True,
+        include_guardian:  bool = True,
+        include_incidents: bool = True,
+        extra_context:     Optional[str] = None,
     ) -> dict:
         """
-        Fetch all data sources in parallel and assemble a context string.
+        Fetch all data sources in parallel and assemble a context dict.
+
+        Returns a dict with:
+          - "context_text"  : pre-formatted string ready for LLM injection  ← KEY FIX
+          - "timestamp"     : UTC timestamp string
+          - "incident"      : structured incident summary
+          - "impact"        : blast radius info
+          - "metrics"       : causal chain depth etc.
+          - "topology"      : list of node dicts
+          - "incidents"     : list of active incident dicts
+          - "ebpf_summary"  : list of eBPF event dicts
+
         Any fetch that fails returns a graceful placeholder.
         """
         tasks = {
@@ -106,51 +110,57 @@ class ClusterContextBuilder:
         results = dict(zip(names, results_raw))
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        # ── Unpack safely ─────────────────────────────────────────────────────
+        gnn = results["gnn"] if isinstance(results["gnn"],   dict) else {}
+        topo = results["topo"] if isinstance(results["topo"],  dict) else {}
+        guard = results["guard"] if isinstance(results["guard"], dict) else {}
+        ebpf = results["ebpf"] if isinstance(
+            results["ebpf"],  (dict, list)) else {}
+        incs = results["incs"] if isinstance(results["incs"],  list) else []
+
+        # ── Build formatted context text ──────────────────────────────────────
         lines: list[str] = [f"=== CCDT REAL-TIME CLUSTER CONTEXT  [{now}] ==="]
 
-        # ── 1. Incident Overview ──────────────────────────────────────────────
-        gnn = results["gnn"] if isinstance(results["gnn"], dict) else {}
         lines += self._fmt_incident_overview(gnn)
-
-        # ── 2. Causal GNN ─────────────────────────────────────────────────────
         lines += self._fmt_gnn(gnn)
 
-        # ── 3. Topology snapshot ──────────────────────────────────────────────
-        topo = results["topo"] if isinstance(results["topo"], dict) else {}
         if topo and include_topology:
             lines += self._fmt_topology(topo)
 
-        # ── 4. eBPF telemetry ─────────────────────────────────────────────────
-        ebpf = results["ebpf"] if isinstance(
-            results["ebpf"], (dict, list)) else {}
         if ebpf and include_ebpf:
             lines += self._fmt_ebpf(ebpf)
 
-        # ── 5. Guardian status ────────────────────────────────────────────────
-        guard = results["guard"] if isinstance(results["guard"], dict) else {}
         if guard and include_guardian:
             lines += self._fmt_guardian(guard)
 
-        # ── 6. Active incidents ───────────────────────────────────────────────
-        incs = results["incs"] if isinstance(results["incs"], list) else []
         if incs and include_incidents:
             lines += self._fmt_incidents(incs)
 
-        # ── 7. Extra context (counterfactual, user-injected) ──────────────────
         if extra_context:
             lines.append("\n[ADDITIONAL CONTEXT]")
             lines.append(extra_context)
 
         lines.append("=== END CONTEXT ===")
+
+        # FIX: join lines into context_text and include it in the return dict.
+        # Previously lines was built but then silently discarded — copilot.py
+        # called raw_ctx.get("context_text") and got None every time, causing
+        # Gemini to receive a raw JSON dump instead of the nicely formatted text.
+        context_text = "\n".join(lines)
+
         return {
+            # ← THE CRITICAL KEY that copilot.py reads
+            "context_text": context_text,
+
             "timestamp": now,
 
             "incident": {
-                "type": gnn.get("incidentType", "healthy"),
-                "confidence": gnn.get("graphClassification", {}).get(
+                "type":            gnn.get("incidentType", "healthy"),
+                "confidence":      gnn.get("graphClassification", {}).get(
                     gnn.get("incidentType", "healthy"), 0
                 ),
-                "root_cause": gnn.get("rootCauseNode", "none"),
+                "root_cause":      gnn.get("rootCauseNode", "none"),
                 "root_confidence": gnn.get("rootCauseConfidence", 0),
             },
 
@@ -165,11 +175,11 @@ class ClusterContextBuilder:
 
             "topology": topo.get("nodes", []) if isinstance(topo, dict) else [],
 
-            "incidents": incs if isinstance(incs, list) else [],
+            "incidents": incs,
 
-            "ebpf_summary": ebpf if isinstance(ebpf, list) else ebpf.get("events", []),
-
-            # 🔥 Optional: keep your nice text for fallback
+            "ebpf_summary": (
+                ebpf if isinstance(ebpf, list) else ebpf.get("events", [])
+            ),
         }
 
     # ── Formatters ────────────────────────────────────────────────────────────
@@ -178,16 +188,16 @@ class ClusterContextBuilder:
         inc_type = gnn.get("incidentType", "healthy")
         emoji = CLASS_EMOJI.get(inc_type, "❓")
         conf = gnn.get("graphClassification", {}).get(inc_type, 0)
-        root = gnn.get("rootCauseNode",       "none identified")
-        r_conf = gnn.get("rootCauseConfidence", 0)
-        blast = gnn.get("blastRadius", [])
+        root = gnn.get("rootCauseNode",        "none identified")
+        r_conf = gnn.get("rootCauseConfidence",  0)
+        blast = gnn.get("blastRadius",           [])
 
         if inc_type == "healthy":
             return ["\n[INCIDENT OVERVIEW]", "  ✅ Cluster is HEALTHY — no active incidents"]
 
         return [
             "\n[INCIDENT OVERVIEW]",
-            f"  {emoji} Status:     {inc_type.upper()}  (confidence: {conf:.0%})",
+            f"  {emoji} Status:      {inc_type.upper()}  (confidence: {conf:.0%})",
             f"  🎯 Root Cause: {root}  (confidence: {r_conf:.0%})",
             f"  💥 Blast Radius: {', '.join(blast) if blast else 'none'}  ({len(blast)} nodes)",
         ]
@@ -205,43 +215,47 @@ class ClusterContextBuilder:
                 emoji = CLASS_EMOJI.get(dominant, "❓")
                 bar = "█" * int(conf * 10) + "░" * (10 - int(conf * 10))
                 lines.append(
-                    f"  {emoji} {node:20s}  {dominant:8s}  [{bar}] {conf:.0%}")
+                    f"  {emoji} {node:20s}  {dominant:8s}  [{bar}] {conf:.0%}"
+                )
 
         chain = gnn.get("causalChain", [])
         if chain:
-            lines.append("  Causal chain: " + " → ".join(
-                f"{c['node']}({c['causalScore']:.2f})" for c in chain[:5]
-            ))
-
+            lines.append(
+                "  Causal chain: " + " → ".join(
+                    f"{c['node']}({c['causalScore']:.2f})" for c in chain[:5]
+                )
+            )
         return lines
 
     def _fmt_topology(self, topo: dict) -> list[str]:
         nodes = topo.get("nodes", [])
         if not nodes:
             return []
-        lines = ["\n[TOPOLOGY SNAPSHOT]",
-                 f"  {'Node':20s}  {'Status':9s}  {'Layer':8s}  {'CPU':>5s}  {'MEM':>5s}  {'Restarts':>8s}"]
-        lines.append("  " + "─" * 60)
+        lines = [
+            "\n[TOPOLOGY SNAPSHOT]",
+            f"  {'Node':20s}  {'Status':9s}  {'Layer':8s}  {'CPU':>5s}  {'MEM':>5s}  {'Restarts':>8s}",
+            "  " + "─" * 60,
+        ]
         for n in nodes:
             s = n.get("status", "healthy")
             em = STATUS_EMOJI.get(s, "❓")
             lines.append(
                 f"  {em} {n.get('id','?'):18s}  {s:9s}  {n.get('layer','?'):8s}"
-                f"  {n.get('cpu',0):4.0f}%  {n.get('mem',0):4.0f}%  {n.get('restarts',0):>8d}"
+                f"  {n.get('cpu',0):4.0f}%  {n.get('mem',0):4.0f}%"
+                f"  {n.get('restarts',0):>8d}"
             )
         return lines
 
-    def _fmt_ebpf(self, ebpf: dict) -> list[str]:
+    def _fmt_ebpf(self, ebpf) -> list[str]:
         events = ebpf if isinstance(ebpf, list) else ebpf.get("events", [])
         if not events:
             return []
-        # Deduplicate by type and show top anomalies
+
         by_type: dict[str, list] = {}
         for ev in events:
             t = ev.get("type", "unknown")
             by_type.setdefault(t, []).append(ev)
 
-        lines = ["\n[eBPF TELEMETRY — Recent Anomalies]"]
         type_labels = {
             "capability": "🔑 Capability escalation",
             "oom":        "💀 OOM kill",
@@ -250,6 +264,7 @@ class ClusterContextBuilder:
             "file":       "📁 Sensitive file access",
             "syscall":    "⚙️  Suspicious syscall",
         }
+        lines = ["\n[eBPF TELEMETRY — Recent Anomalies]"]
         for t, evs in sorted(by_type.items()):
             label = type_labels.get(t, t)
             sample = evs[0]
@@ -272,7 +287,8 @@ class ClusterContextBuilder:
                 status_icon = "✅" if "execut" in h.get("status", "") else "🚫"
                 lines.append(
                     f"    {status_icon} {h.get('name','?'):25s}  "
-                    f"target={h.get('target','?'):15s}  status={h.get('status','?')}"
+                    f"target={h.get('target','?'):15s}  "
+                    f"status={h.get('status','?')}"
                 )
         else:
             lines.append("  No recent guardian actions")
@@ -331,10 +347,17 @@ class ClusterContextBuilder:
             async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as c:
                 hist_r = await c.get(f"{GUARDIAN_URL}/actions/history?limit=10")
                 pend_r = await c.get(f"{GUARDIAN_URL}/actions/pending")
+
+                # FIX: parse each response exactly once into a local variable.
+                # The original code called hist_r.json() twice — the second call
+                # raises an error because the response body stream is already consumed.
+                hist_json = hist_r.json() if hist_r.status_code == 200 else {}
+                pend_json = pend_r.json() if pend_r.status_code == 200 else {}
+
                 data = {
-                    "history":       hist_r.json().get("history", []) if hist_r.status_code == 200 else [],
-                    "autonomy_mode": hist_r.json().get("autonomy_mode", "unknown") if hist_r.status_code == 200 else "unknown",
-                    "pending_count": len(pend_r.json().get("pending", [])) if pend_r.status_code == 200 else 0,
+                    "history":       hist_json.get("history", []),
+                    "autonomy_mode": hist_json.get("autonomy_mode", "unknown"),
+                    "pending_count": len(pend_json.get("pending", [])),
                 }
                 self._cache_guard.set(data)
                 return data
@@ -363,7 +386,9 @@ class ClusterContextBuilder:
             return cached
         try:
             async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as c:
-                r = await c.get(f"{API_GW_URL}/api/v1/incidents?status=active&limit=10")
+                r = await c.get(
+                    f"{API_GW_URL}/api/v1/incidents?status=active&limit=10"
+                )
                 if r.status_code == 200:
                     data = r.json().get("incidents", [])
                     self._cache_incs.set(data)
