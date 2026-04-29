@@ -19,7 +19,7 @@ import {
   Key,
   Search,
   Info,
-  Wrench
+  Wre
 } from "lucide-react";
 // ─── THEME & CONSTANTS ───────────────────────────────────────────────────────
 const T = {
@@ -40,9 +40,9 @@ const T = {
   orangeDim: "#FF8C0033",
   yellow: "#FFD60A",
   purple: "#9B5DE5",
-  text: "#C8D8E8",
-  textDim: "#6B8199",
-  textBright: "#E8F4FF",
+  text: "#f9fafcff",
+  textDim: "#ffffffff",
+  textBright: "#fcfdffff",
 };
 
 // ─── TOPOLOGY DATA ────────────────────────────────────────────────────────────
@@ -935,11 +935,11 @@ export default function CCDTApp() {
   };
 
   const nav = [
-    { id: "topology", label: "Topology", icon: <Map size={16} /> },
-    { id: "intelligence", label: "Intelligence", icon: <Brain size={16} /> },
-    { id: "guardian", label: "Guardian", icon: <Shield size={16} /> },
-    { id: "copilot", label: "Co-Pilot", icon: <MessageSquare size={16} /> },
-    { id: "validation", label: "Validation", icon: <BarChart3 size={16} /> },
+    { id: "topology", label: "Topology", icon: <Map size={16} />, color: T.cyan },
+    { id: "intelligence", label: "Intelligence", icon: <Brain size={16} />, color: T.purple },
+    { id: "guardian", label: "Guardian", icon: <Shield size={16} />, color: T.green },
+    { id: "copilot", label: "Co-Pilot", icon: <MessageSquare size={16} />, color: T.yellow },
+    { id: "validation", label: "Validation", icon: <BarChart3 size={16} />, color: T.orange },
   ];
 
   const systemStatus = nodes.some(n => n.status === "critical") ? "critical"

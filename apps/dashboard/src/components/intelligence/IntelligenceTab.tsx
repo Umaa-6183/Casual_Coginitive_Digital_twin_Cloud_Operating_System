@@ -2,6 +2,7 @@ import React from 'react';
 import { useGNN } from '@/hooks/useGNN';
 import { MetricBar } from '@/components/shared/MetricBar';
 import { GlowBadge } from '@/components/shared/GlowBadge';
+import { Settings } from "lucide-react";
 
 const CLASS_COLORS = { healthy: '#00FF9F', fault: '#FFB800', attack: '#FF3B5C' };
 
@@ -19,9 +20,25 @@ export const IntelligenceTab: React.FC = () => {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#4A6A8A' }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 32, marginBottom: 8, animation: 'spin 1s linear infinite' }}>⚙</div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "100%",
+          color: "#4A6A8A",
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <div
+            style={{
+              fontSize: 32,
+              marginBottom: 8,
+              animation: "spin 1s linear infinite",
+            }}
+          >
+            <Settings size={32} color="#22D3EE" />
+          </div>
           <div>Running GNN inference…</div>
         </div>
       </div>
@@ -40,7 +57,7 @@ export const IntelligenceTab: React.FC = () => {
         <div style={{
           background: '#06111F', border: '1px solid #0D2244', borderRadius: 12, padding: 20,
         }}>
-          <div style={{ fontSize: 11, color: '#4A6A8A', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: '#ecb5fbff', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14 }}>
             Graph-Level Classification
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
@@ -79,7 +96,7 @@ export const IntelligenceTab: React.FC = () => {
         <div style={{
           background: '#06111F', border: '1px solid #0D2244', borderRadius: 12, padding: 20,
         }}>
-          <div style={{ fontSize: 11, color: '#4A6A8A', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: '#a1baf9ff', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14 }}>
             Root Cause Analysis
           </div>
 
@@ -87,7 +104,7 @@ export const IntelligenceTab: React.FC = () => {
             background: '#FF3B5C11', border: '1px solid #FF3B5C44', borderRadius: 8,
             padding: '12px 14px', marginBottom: 16,
           }}>
-            <div style={{ fontSize: 11, color: '#4A6A8A', marginBottom: 4 }}>Root Cause Node</div>
+            <div style={{ fontSize: 11, color: '#f1f7fdff', marginBottom: 4 }}>Root Cause Node</div>
             <div style={{ fontSize: 18, fontWeight: 700, color: '#FF3B5C', fontFamily: 'JetBrains Mono, monospace' }}>
               {inference.rootCauseNode}
             </div>
@@ -96,7 +113,7 @@ export const IntelligenceTab: React.FC = () => {
             </div>
           </div>
 
-          <div style={{ fontSize: 11, color: '#4A6A8A', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+          <div style={{ fontSize: 11, color: '#daeafaff', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
             Blast Radius ({inference.blastRadius.length} nodes)
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -117,7 +134,7 @@ export const IntelligenceTab: React.FC = () => {
           background: '#06111F', border: '1px solid #0D2244', borderRadius: 12, padding: 20,
           gridColumn: '1 / -1',
         }}>
-          <div style={{ fontSize: 11, color: '#4A6A8A', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: '#a3edf9ff', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14 }}>
             Causal Chain (Pearl's do-calculus — eBPF evidence)
           </div>
           {CAUSAL_SIGNAL.map((step, i) => {
@@ -148,7 +165,7 @@ export const IntelligenceTab: React.FC = () => {
                     </span>
                     <GlowBadge severity={isAttack ? 'critical' : 'warning'} label={step.type} />
                   </div>
-                  <div style={{ fontSize: 12, color: '#8899AA', lineHeight: 1.4 }}>{step.event}</div>
+                  <div style={{ fontSize: 12, color: '#fbf1feff', lineHeight: 1.4 }}>{step.event}</div>
                 </div>
               </div>
             );
@@ -160,7 +177,7 @@ export const IntelligenceTab: React.FC = () => {
           background: '#06111F', border: '1px solid #0D2244', borderRadius: 12, padding: 20,
           gridColumn: '1 / -1',
         }}>
-          <div style={{ fontSize: 11, color: '#4A6A8A', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: '#dbe8fbff', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14 }}>
             Per-Node Classification (GNN Output)
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>

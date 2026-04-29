@@ -18,6 +18,7 @@ import {
   Key,
   Search,
   Info,
+  Clock,
 } from "lucide-react";
 
 // ─── THEME ────────────────────────────────────────────────────────────────────
@@ -41,9 +42,9 @@ const T = {
   yellowDim: "#FFD60A22",
   purple: "#9B5DE5",
   purpleDim: "#9B5DE522",
-  text: "#C8D8E8",
-  textDim: "#5A7A99",
-  textBright: "#E8F4FF",
+  text: "#f9fafcff",
+  textDim: "#ffffffff",
+  textBright: "#fcfdffff",
 };
 
 const MONO = "'JetBrains Mono', 'Fira Code', monospace";
@@ -300,37 +301,37 @@ const INCIDENTS = [
       {
         t: "14:32:07",
         event: "eBPF: privilege escalation detected",
-        icon: <Zap size={14} />,
+        icon: <Zap size={14} />, color: T.red,
       },
       {
         t: "14:32:08",
         event: "GNN: root cause identified (94% confidence)",
-        icon: <Brain size={14} />,
+        icon: <Brain size={14} />, color: T.purple,
       },
       {
         t: "14:32:08",
         event: "GNN: classified as ATTACK (not fault)",
-        icon: <AlertCircle size={14} />,
+        icon: <AlertCircle size={14} />, color: T.red,
       },
       {
         t: "14:32:09",
         event: "RL: action proposed — isolate + block IP",
-        icon: <Shield size={14} />,
+        icon: <Shield size={14} />, color: T.cyan,
       },
       {
         t: "14:32:09",
         event: "Ghost Preview: simulation complete (PASS)",
-        icon: <Ghost size={14} />,
+        icon: <Ghost size={14} />, color: T.green,
       },
       {
         t: "14:32:09",
         event: "OPA: all 5 policies satisfied",
-        icon: <CheckCircle size={14} />,
+        icon: <CheckCircle size={14} />, color: T.green,
       },
       {
         t: "14:32:10",
         event: "Awaiting SRE approval (human-in-the-loop mode)",
-        icon: <Hourglass size={14} />,
+        icon: <Hourglass size={14} />, color: T.yellow,
       },
     ],
   },
@@ -353,22 +354,22 @@ const INCIDENTS = [
       {
         t: "14:31:55",
         event: "eBPF: OOM score 742 detected",
-        icon: <Zap size={14} />,
+        icon: <Zap size={14} />, color: T.red,
       },
       {
         t: "14:31:56",
         event: "GNN: causal link to INC-2847 established",
-        icon: <Brain size={14} />,
+        icon: <Brain size={14} />, color: T.purple,
       },
       {
         t: "14:31:57",
         event: "GNN: classified as FAULT (cascading)",
-        icon: <AlertTriangle size={14} />,
+        icon: <AlertTriangle size={14} />, color: T.yellow,
       },
       {
         t: "14:31:58",
         event: "RL: action proposed — memory limit + restart",
-        icon: <Shield size={14} />,
+        icon: <Shield size={14} />, color: T.cyan,
       },
     ],
   },
@@ -391,27 +392,27 @@ const INCIDENTS = [
       {
         t: "14:31:22",
         event: "eBPF: syscall anomaly detected (847/s)",
-        icon: <Zap size={14} />,
+        icon: <Zap size={14} />, color: T.red,
       },
       {
         t: "14:31:23",
         event: "GNN: brute force pattern (88% confidence)",
-        icon: <Brain size={14} />,
+        icon: <Brain size={14} />, color: T.purple,
       },
       {
         t: "14:31:24",
         event: "RL + OPA: rate-limit approved",
-        icon: <CheckCircle size={14} />,
+        icon: <CheckCircle size={14} />, color: T.green,
       },
       {
         t: "14:31:33",
         event: "Executor: NetworkPolicy applied",
-        icon: <Settings size={14} />,
+        icon: <Settings size={14} />, color: T.cyan,
       },
       {
         t: "14:33:33",
         event: "RESOLVED — attack traffic dropped to 0",
-        icon: <CheckCircle size={14} />,
+        icon: <CheckCircle size={14} />, color: T.green,
       },
     ],
   },
@@ -434,27 +435,27 @@ const INCIDENTS = [
       {
         t: "14:29:18",
         event: "eBPF: sched_latency p99 spike",
-        icon: <Zap size={14} />,
+        icon: <Zap size={14} />, color: T.red,
       },
       {
         t: "14:29:19",
         event: "GNN: contention root cause identified",
-        icon: <Brain size={14} />,
+        icon: <Brain size={14} />, color: T.purple,
       },
       {
         t: "14:29:20",
         event: "RL: scale ml-svc replicas proposed",
-        icon: <Shield size={14} />,
+        icon: <Shield size={14} />, color: T.cyan,
       },
       {
         t: "14:29:22",
         event: "HPA scaling triggered autonomously",
-        icon: <Settings size={14} />,
+        icon: <Settings size={14} />, color: T.cyan,
       },
       {
         t: "14:33:02",
         event: "RESOLVED — latency back to 11ms p99",
-        icon: <CheckCircle size={14} />,
+        icon: <CheckCircle size={14} />, color: T.green,
       },
     ],
   },
@@ -470,46 +471,131 @@ function IncidentManager() {
   const filtered = INCIDENTS.filter(i => filterStatus === "all" || i.status === filterStatus);
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "360px 1fr", gap: 16, height: "100%" }}>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "360px 1fr",
+        gap: 16,
+        height: "100%",
+      }}
+    >
       {/* Incident List */}
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6 }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr 1fr 1fr",
+            gap: 6,
+          }}
+        >
           {[
             { label: "active", count: 1, color: T.red },
             { label: "investigating", count: 1, color: T.yellow },
             { label: "auto-resolved", count: 1, color: T.green },
             { label: "resolved", count: 1, color: T.textDim },
-          ].map(s => (
-            <button key={s.label} onClick={() => setFilterStatus(prev => prev === s.label ? "all" : s.label)} style={{
-              padding: "8px 4px", background: filterStatus === s.label ? `${s.color}22` : T.bg2,
-              border: `1px solid ${filterStatus === s.label ? s.color : T.border}`, borderRadius: 6,
-              color: s.color, fontFamily: MONO, fontSize: 9, cursor: "pointer", textAlign: "center",
-              transition: "all .2s", textTransform: "uppercase",
-            }}>
-              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 2 }}>{s.count}</div>
+          ].map((s) => (
+            <button
+              key={s.label}
+              onClick={() =>
+                setFilterStatus((prev) => (prev === s.label ? "all" : s.label))
+              }
+              style={{
+                padding: "8px 4px",
+                background: filterStatus === s.label ? `${s.color}22` : T.bg2,
+                border: `1px solid ${filterStatus === s.label ? s.color : T.border}`,
+                borderRadius: 6,
+                color: s.color,
+                fontFamily: MONO,
+                fontSize: 9,
+                cursor: "pointer",
+                textAlign: "center",
+                transition: "all .2s",
+                textTransform: "uppercase",
+              }}
+            >
+              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 2 }}>
+                {s.count}
+              </div>
               <div>{s.label}</div>
             </button>
           ))}
         </div>
 
-        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
-          {filtered.map(inc => (
-            <div key={inc.id} onClick={() => setSelected(inc)} style={{
-              padding: "14px", background: selected.id === inc.id ? `${T.cyan}0D` : T.bg1,
-              border: `1px solid ${selected.id === inc.id ? T.cyanDim : T.border}`,
-              borderLeft: `3px solid ${sevColor[inc.severity]}`,
-              borderRadius: 8, cursor: "pointer", transition: "all .2s",
-              boxShadow: selected.id === inc.id ? `0 0 12px ${T.cyanDim}` : "none",
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                <span style={{ color: T.textDim, fontFamily: MONO, fontSize: 10 }}>{inc.id}</span>
-                <Badge label={inc.status} color={statusColor[inc.status]} size={9} />
+        <div
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
+          {filtered.map((inc) => (
+            <div
+              key={inc.id}
+              onClick={() => setSelected(inc)}
+              style={{
+                padding: "14px",
+                background: selected.id === inc.id ? `${T.cyan}0D` : T.bg1,
+                border: `1px solid ${selected.id === inc.id ? T.cyanDim : T.border}`,
+                borderLeft: `3px solid ${sevColor[inc.severity]}`,
+                borderRadius: 8,
+                cursor: "pointer",
+                transition: "all .2s",
+                boxShadow:
+                  selected.id === inc.id ? `0 0 12px ${T.cyanDim}` : "none",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  marginBottom: 6,
+                }}
+              >
+                <span
+                  style={{ color: T.textDim, fontFamily: MONO, fontSize: 10 }}
+                >
+                  {inc.id}
+                </span>
+                <Badge
+                  label={inc.status}
+                  color={statusColor[inc.status]}
+                  size={9}
+                />
               </div>
-              <div style={{ color: T.textBright, fontSize: 12, lineHeight: 1.4, marginBottom: 8 }}>{inc.title}</div>
+              <div
+                style={{
+                  color: T.textBright,
+                  fontSize: 12,
+                  lineHeight: 1.4,
+                  marginBottom: 8,
+                }}
+              >
+                {inc.title}
+              </div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <Badge label={inc.severity} color={sevColor[inc.severity]} size={9} />
-                <Badge label={inc.type} color={inc.type === "attack" ? T.red : T.orange} size={9} />
-                <span style={{ color: T.textDim, fontSize: 9, fontFamily: MONO, marginLeft: "auto" }}>⏱ {inc.elapsed}</span>
+                <Badge
+                  label={inc.severity}
+                  color={sevColor[inc.severity]}
+                  size={9}
+                />
+                <Badge
+                  label={inc.type}
+                  color={inc.type === "attack" ? T.red : T.orange}
+                  size={9}
+                />
+                <span
+                  style={{
+                    color: T.textDim,
+                    fontSize: 9,
+                    fontFamily: MONO,
+                    marginLeft: "auto",
+                  }}
+                >
+                  <Clock size={12} color={T.green} />
+                  {inc.elapsed}
+                </span>
               </div>
             </div>
           ))}
@@ -518,57 +604,207 @@ function IncidentManager() {
 
       {/* Incident Detail */}
       {selected && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, overflowY: "auto", animation: "fadeIn .3s ease" }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
+            overflowY: "auto",
+            animation: "fadeIn .3s ease",
+          }}
+        >
           {/* Header */}
-          <div style={{ padding: "16px 20px", background: T.bg1, border: `1px solid ${T.border}`, borderLeft: `3px solid ${sevColor[selected.severity]}`, borderRadius: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+          <div
+            style={{
+              padding: "16px 20px",
+              background: T.bg1,
+              border: `1px solid ${T.border}`,
+              borderLeft: `3px solid ${sevColor[selected.severity]}`,
+              borderRadius: 10,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                marginBottom: 8,
+              }}
+            >
               <div>
-                <span style={{ color: T.textDim, fontFamily: MONO, fontSize: 10 }}>{selected.id}</span>
-                <div style={{ color: T.textBright, fontSize: 15, fontWeight: 600, marginTop: 4, lineHeight: 1.3 }}>{selected.title}</div>
+                <span
+                  style={{ color: T.textDim, fontFamily: MONO, fontSize: 10 }}
+                >
+                  {selected.id}
+                </span>
+                <div
+                  style={{
+                    color: T.textBright,
+                    fontSize: 15,
+                    fontWeight: 600,
+                    marginTop: 4,
+                    lineHeight: 1.3,
+                  }}
+                >
+                  {selected.title}
+                </div>
               </div>
-              <Badge label={selected.status} color={statusColor[selected.status]} />
+              <Badge
+                label={selected.status}
+                color={statusColor[selected.status]}
+              />
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Badge label={selected.severity} color={sevColor[selected.severity]} />
-              <Badge label={selected.type} color={selected.type === "attack" ? T.red : T.orange} />
+              <Badge
+                label={selected.severity}
+                color={sevColor[selected.severity]}
+              />
+              <Badge
+                label={selected.type}
+                color={selected.type === "attack" ? T.red : T.orange}
+              />
               <Badge label={`GNN ${selected.confidence}%`} color={T.cyan} />
               <Badge label={`opened ${selected.opened}`} color={T.textDim} />
             </div>
           </div>
 
           {/* Metrics row */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
-            <Pill value={selected.elapsed} label="Elapsed" color={selected.status === "active" ? T.red : T.green} />
-            <Pill value={selected.affected.length} label="Services Affected" color={T.orange} sub={selected.affected.join(", ")} />
-            <Pill value={`${selected.confidence}%`} label="GNN Confidence" color={T.cyan} />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3,1fr)",
+              gap: 10,
+            }}
+          >
+            <Pill
+              value={selected.elapsed}
+              label="Elapsed"
+              color={selected.status === "active" ? T.red : T.green}
+            />
+            <Pill
+              value={selected.affected.length}
+              label="Services Affected"
+              color={T.orange}
+              sub={selected.affected.join(", ")}
+            />
+            <Pill
+              value={`${selected.confidence}%`}
+              label="GNN Confidence"
+              color={T.cyan}
+            />
           </div>
 
           {/* Root cause */}
           <Panel title="ROOT CAUSE (Causal GNN)" badge="CAUSAL ANALYSIS">
-            <div style={{ padding: "12px 14px", background: T.bg2, borderRadius: 6, border: `1px solid ${T.border}` }}>
-              <div style={{ color: T.textDim, fontSize: 10, fontFamily: MONO, marginBottom: 4 }}>CAUSAL CHAIN</div>
-              <div style={{ color: T.textBright, fontSize: 13, lineHeight: 1.5 }}>{selected.root_cause}</div>
+            <div
+              style={{
+                padding: "12px 14px",
+                background: T.bg2,
+                borderRadius: 6,
+                border: `1px solid ${T.border}`,
+              }}
+            >
+              <div
+                style={{
+                  color: T.textDim,
+                  fontSize: 10,
+                  fontFamily: MONO,
+                  marginBottom: 4,
+                }}
+              >
+                CAUSAL CHAIN
+              </div>
+              <div
+                style={{ color: T.textBright, fontSize: 13, lineHeight: 1.5 }}
+              >
+                {selected.root_cause}
+              </div>
             </div>
-            <div style={{ marginTop: 10, padding: "12px 14px", background: `${T.purple}0D`, borderRadius: 6, border: `1px solid ${T.purpleDim}` }}>
-              <div style={{ color: T.textDim, fontSize: 10, fontFamily: MONO, marginBottom: 4 }}>AUTONOMOUS ACTION</div>
-              <div style={{ color: T.purple, fontSize: 12 }}>{selected.auto_action}</div>
+            <div
+              style={{
+                marginTop: 10,
+                padding: "12px 14px",
+                background: `${T.purple}0D`,
+                borderRadius: 6,
+                border: `1px solid ${T.purpleDim}`,
+              }}
+            >
+              <div
+                style={{
+                  color: T.textDim,
+                  fontSize: 10,
+                  fontFamily: MONO,
+                  marginBottom: 4,
+                }}
+              >
+                AUTONOMOUS ACTION
+              </div>
+              <div style={{ color: T.purple, fontSize: 12 }}>
+                {selected.auto_action}
+              </div>
             </div>
           </Panel>
 
           {/* Timeline */}
           <Panel title="INCIDENT TIMELINE">
             <div style={{ position: "relative", paddingLeft: 24 }}>
-              <div style={{ position: "absolute", left: 8, top: 0, bottom: 0, width: 2, background: T.border, borderRadius: 1 }} />
+              <div
+                style={{
+                  position: "absolute",
+                  left: 8,
+                  top: 0,
+                  bottom: 0,
+                  width: 2,
+                  background: T.border,
+                  borderRadius: 1,
+                }}
+              />
               {selected.timeline.map((t, i) => (
-                <div key={i} style={{ position: "relative", marginBottom: 12, animation: `fadeIn .3s ease ${i * .08}s both` }}>
-                  <div style={{
-                    position: "absolute", left: -20, top: 2, width: 16, height: 16,
-                    borderRadius: "50%", background: T.bg1, border: `1.5px solid ${T.cyanDim}`,
-                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, zIndex: 1,
-                  }}>{t.icon}</div>
-                  <div style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
-                    <span style={{ color: T.textDim, fontFamily: MONO, fontSize: 10, flexShrink: 0 }}>{t.t}</span>
-                    <span style={{ color: T.text, fontSize: 12, lineHeight: 1.4 }}>{t.event}</span>
+                <div
+                  key={i}
+                  style={{
+                    position: "relative",
+                    marginBottom: 12,
+                    animation: `fadeIn .3s ease ${i * 0.08}s both`,
+                  }}
+                >
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: -20,
+                      top: 2,
+                      width: 16,
+                      height: 16,
+                      borderRadius: "50%",
+                      background: T.bg1,
+                      border: `1.5px solid ${T.cyanDim}`,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 8,
+                      zIndex: 1,
+                    }}
+                  >
+                    {t.icon}
+                  </div>
+                  <div
+                    style={{ display: "flex", gap: 10, alignItems: "baseline" }}
+                  >
+                    <span
+                      style={{
+                        color: T.textDim,
+                        fontFamily: MONO,
+                        fontSize: 10,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {t.t}
+                    </span>
+                    <span
+                      style={{ color: T.text, fontSize: 12, lineHeight: 1.4 }}
+                    >
+                      {t.event}
+                    </span>
                   </div>
                 </div>
               ))}
@@ -578,14 +814,34 @@ function IncidentManager() {
           {/* Affected services */}
           <Panel title="AFFECTED SERVICES">
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {selected.affected.map(svc => (
-                <div key={svc} style={{ padding: "10px 16px", background: T.bg2, border: `1px solid ${T.redDim}`, borderRadius: 6 }}>
-                  <div style={{ color: T.textBright, fontFamily: MONO, fontSize: 12 }}>{svc}</div>
-                  <div style={{ color: T.red, fontSize: 10, marginTop: 2 }}>IMPACTED</div>
+              {selected.affected.map((svc) => (
+                <div
+                  key={svc}
+                  style={{
+                    padding: "10px 16px",
+                    background: T.bg2,
+                    border: `1px solid ${T.redDim}`,
+                    borderRadius: 6,
+                  }}
+                >
+                  <div
+                    style={{
+                      color: T.textBright,
+                      fontFamily: MONO,
+                      fontSize: 12,
+                    }}
+                  >
+                    {svc}
+                  </div>
+                  <div style={{ color: T.red, fontSize: 10, marginTop: 2 }}>
+                    IMPACTED
+                  </div>
                 </div>
               ))}
-              {!selected.affected.find(s => s) && (
-                <div style={{ color: T.textDim, fontSize: 12 }}>No affected services</div>
+              {!selected.affected.find((s) => s) && (
+                <div style={{ color: T.textDim, fontSize: 12 }}>
+                  No affected services
+                </div>
               )}
             </div>
           </Panel>
@@ -831,31 +1087,37 @@ function Settings() {
 // ─── TICKER BAR ───────────────────────────────────────────────────────────────
 function TickerBar() {
   const items = [
-    { icon: <Zap size={12} />, text: "eBPF: 847 events/sec" },
+    { icon: <Zap size={12} />, text: "eBPF: 847 events/sec", color: T.green },
     {
       icon: <AlertCircle size={12} />,
       text: "INC-2847: Cryptominer active in order-svc — Ghost Preview ready",
+      color: T.red,
     },
     {
       icon: <Brain size={12} />,
       text: "GNN: 94.2% confidence on root cause identification",
+      color: T.purple,
     },
     {
       icon: <Shield size={12} />,
       text: "OPA: 5/5 policies active — 2 violations flagged",
+      color: T.green,
     },
     {
       icon: <CheckCircle size={12} />,
       text: "INC-2845: Auto-resolved in 2m 11s",
+      color: T.cyan,
     },
-    { icon: <BarChart3 size={12} />, text: "MTTR reduction: 68% vs baseline" },
+    { icon: <BarChart3 size={12} />, text: "MTTR reduction: 68% vs baseline", color: T.orange },
     {
       icon: <Globe size={12} />,
       text: "Cluster: 10 nodes healthy — 3 incidents tracked",
+      color: T.textDim,
     },
     {
       icon: <MessageSquare size={12} />,
       text: "Co-Pilot: claude-sonnet-4 online — causal reasoning active",
+      color: T.cyan,
     },
   ];
 
@@ -904,22 +1166,25 @@ function TickerBar() {
 
 
 const NAV = [
-  { id: "ebpf", icon: <Zap size={16} />, label: "eBPF Sensors", badge: "LIVE" },
+  { id: "ebpf", icon: <Zap size={16} />, color: T.cyan, label: "eBPF Sensors", badge: "LIVE" },
   {
     id: "incidents",
     icon: <AlertTriangle size={16} />,
+    color: T.red,
     label: "Incidents",
     badge: "2 ACTIVE",
   },
   {
     id: "notify",
     icon: <Bell size={16} />,
+    color: T.cyan,
     label: "Notifications",
     badge: "3 NEW",
   },
   {
     id: "settings",
     icon: <Settings size={16} />,
+    color: T.green,
     label: "Settings",
     badge: null,
   },

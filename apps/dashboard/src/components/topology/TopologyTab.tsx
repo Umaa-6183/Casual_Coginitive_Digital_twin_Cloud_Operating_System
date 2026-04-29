@@ -5,12 +5,37 @@ import { NodeCard }        from './NodeCard';
 import { GhostPreviewModal } from '@/components/ghost/GhostPreviewModal';
 import { GlowBadge }       from '@/components/shared/GlowBadge';
 import type { GhostAction } from '@/types';
+import { Zap, Brain, Shield, MessageSquare } from "lucide-react";
 
 const LAYER_HEALTH = [
-  { label: 'L1 Nervous',  sub: 'eBPF Probes', status: 'ACTIVE',  color: '#00FF9F', icon: '⚡' },
-  { label: 'L2 Cognitive',sub: 'GNN Active',  status: 'ACTIVE',  color: '#00D4FF', icon: '🧠' },
-  { label: 'L3 Guardian', sub: 'OPA Enforced',status: 'ACTIVE',  color: '#9B5DE5', icon: '🛡' },
-  { label: 'L4 Co-Pilot', sub: 'LLM Ready',   status: 'STANDBY', color: '#FFB800', icon: '💬' },
+  {
+    label: "L1 Nervous",
+    sub: "eBPF Probes",
+    status: "ACTIVE",
+    color: "#34D399",
+    icon: <Zap size={14} />,
+  },
+  {
+    label: "L2 Cognitive",
+    sub: "GNN Active",
+    status: "ACTIVE",
+    color: "#22D3EE",
+    icon: <Brain size={14} />,
+  },
+  {
+    label: "L3 Guardian",
+    sub: "OPA Enforced",
+    status: "ACTIVE",
+    color: "#A78BFA",
+    icon: <Shield size={14} />,
+  },
+  {
+    label: "L4 Co-Pilot",
+    sub: "LLM Ready",
+    status: "STANDBY",
+    color: "#FBBF24",
+    icon: <MessageSquare size={14} />,
+  },
 ];
 
 export const TopologyTab: React.FC = () => {
@@ -45,7 +70,7 @@ export const TopologyTab: React.FC = () => {
             <span style={{ fontSize: 18, fontWeight: 700, color: s.color, fontFamily: 'JetBrains Mono, monospace' }}>
               {s.value}
             </span>
-            <span style={{ fontSize: 11, color: '#4A6A8A' }}>{s.label}</span>
+            <span style={{ fontSize: 11, color: '#d7ecfaff' }}>{s.label}</span>
           </div>
         ))}
         <div style={{ flex: 1 }} />
@@ -56,7 +81,7 @@ export const TopologyTab: React.FC = () => {
               width: 6, height: 6, borderRadius: '50%', background: l.color,
               boxShadow: `0 0 6px ${l.color}`,
             }} />
-            <span style={{ fontSize: 10, color: '#4A6A8A', fontFamily: 'JetBrains Mono, monospace' }}>
+            <span style={{ fontSize: 10, color: '#b9b9f6ff', fontFamily: 'JetBrains Mono, monospace' }}>
               {l.label}
             </span>
           </div>

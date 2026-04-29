@@ -2,6 +2,7 @@ import React from 'react';
 import type { ServiceNode, GhostAction } from '@/types';
 import { MetricBar }  from '@/components/shared/MetricBar';
 import { GlowBadge }  from '@/components/shared/GlowBadge';
+import { RefreshCcw, Lock, TrendingUp, Shield } from "lucide-react";
 
 interface Props {
   node:          ServiceNode;
@@ -18,10 +19,30 @@ const LAYER_LABELS: Record<string, string> = {
 
 export const NodeCard: React.FC<Props> = ({ node, onClose, onGhostPreview }) => {
   const actions: GhostAction[] = [
-    { label: 'Restart Pod',      icon: '🔄', actionName: 'restart_pod',        targetNode: node.id },
-    { label: 'Isolate Container',icon: '🔒', actionName: 'isolate_container',   targetNode: node.id },
-    { label: 'Scale Up',         icon: '📈', actionName: 'scale_up_replicas',   targetNode: node.id },
-    { label: 'Block IP',         icon: '🛡', actionName: 'block_ip',            targetNode: node.id },
+    {
+      label: "Restart Pod",
+      icon: <RefreshCcw size={14} />,
+      actionName: "restart_pod",
+      targetNode: node.id,
+    },
+    {
+      label: "Isolate Container",
+      icon: <Lock size={14} />,
+      actionName: "isolate_container",
+      targetNode: node.id,
+    },
+    {
+      label: "Scale Up",
+      icon: <TrendingUp size={14} />,
+      actionName: "scale_up_replicas",
+      targetNode: node.id,
+    },
+    {
+      label: "Block IP",
+      icon: <Shield size={14} />,
+      actionName: "block_ip",
+      targetNode: node.id,
+    },
   ];
 
   return (

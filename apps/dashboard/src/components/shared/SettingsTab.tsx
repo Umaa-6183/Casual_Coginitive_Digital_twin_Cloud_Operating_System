@@ -35,14 +35,26 @@ function Slider({
   value, min, max, onChange, unit,
 }: { value: number; min: number; max: number; onChange: (v: number) => void; unit?: string }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
       <input
-        type="range" min={min} max={max} value={value}
-        onChange={e => onChange(Number(e.target.value))}
-        style={{ width: 120, accentColor: '#00D4FF' }}
+        type="range"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{ width: 120, accentColor: "#00D4FF" }}
+        title="Adjust value"
       />
-      <span style={{ fontSize: 12, color: '#00D4FF', fontFamily: 'JetBrains Mono, monospace', minWidth: 40 }}>
-        {value}{unit}
+      <span
+        style={{
+          fontSize: 12,
+          color: "#00D4FF",
+          fontFamily: "JetBrains Mono, monospace",
+          minWidth: 40,
+        }}
+      >
+        {value}
+        {unit}
       </span>
     </div>
   );

@@ -2,7 +2,15 @@ import React from 'react';
 import { useEBPFStream } from '@/hooks/useEBPFStream';
 import { GlowBadge }    from '@/components/shared/GlowBadge';
 import type { EBPFEventType } from '@/types';
-
+import {
+  Settings,
+  Flame,
+  Globe,
+  Clock,
+  Folder,
+  Key,
+  Radar,
+} from "lucide-react";
 const TYPE_COLORS: Record<EBPFEventType, string> = {
   syscall:    '#FF3B5C',
   oom:        '#FF3B5C',
@@ -13,14 +21,14 @@ const TYPE_COLORS: Record<EBPFEventType, string> = {
   probe:      '#00D4FF',
 };
 
-const TYPE_ICONS: Record<EBPFEventType, string> = {
-  syscall:    '⚙',
-  oom:        '💥',
-  tcp:        '🌐',
-  sched:      '⏱',
-  file:       '📁',
-  capability: '🔑',
-  probe:      '📡',
+const TYPE_ICONS: Record<EBPFEventType, React.ReactNode> = {
+  syscall: <Settings size={14} color="#A78BFA" />,
+  oom: <Flame size={14} color="#F87171" />,
+  tcp: <Globe size={14} color="#22D3EE" />,
+  sched: <Clock size={14} color="#FBBF24" />,
+  file: <Folder size={14} color="#34D399" />,
+  capability: <Key size={14} color="#F87171" />,
+  probe: <Radar size={14} color="#94A3B8" />,
 };
 
 const SEV_COLORS = { critical: '#FF3B5C', warning: '#FFB800', info: '#00D4FF' };
@@ -67,7 +75,7 @@ export const EBPFTab: React.FC = () => {
             <span style={{ fontSize: 18, fontWeight: 700, color: s.color, fontFamily: 'JetBrains Mono, monospace' }}>
               {s.value}
             </span>
-            <span style={{ fontSize: 11, color: '#4A6A8A' }}>{s.label}</span>
+            <span style={{ fontSize: 11, color: '#d4d6d7ff' }}>{s.label}</span>
           </div>
         ))}
         <div style={{ flex: 1 }} />
@@ -95,7 +103,7 @@ export const EBPFTab: React.FC = () => {
               style={{
                 border:     filter === f.id ? `1px solid ${color}66` : '1px solid #0D2244',
                 background: filter === f.id ? `${color}15` : 'transparent',
-                color:      filter === f.id ? color : '#4A6A8A',
+                color:      filter === f.id ? color : '#c6c7c8ff',
                 borderRadius: 6, padding: '3px 10px', cursor: 'pointer', fontSize: 11,
                 transition: 'all 0.15s',
               }}
@@ -119,51 +127,102 @@ export const EBPFTab: React.FC = () => {
               <div
                 key={evt.id}
                 style={{
-                  display:     'flex',
-                  alignItems:  'flex-start',
-                  gap:         10,
-                  padding:     '6px 8px',
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 10,
+                  padding: "6px 8px",
                   marginBottom: 3,
                   borderRadius: 6,
-                  background:  isNew ? '#00D4FF08' : 'transparent',
-                  border:      `1px solid ${evt.severity === 'critical' ? '#FF3B5C22' : 'transparent'}`,
-                  transition:  'background 0.4s',
-                  animation:   isNew ? 'fadeSlideIn 0.2s ease' : undefined,
+                  background: isNew ? "#00D4FF08" : "transparent",
+                  border: `1px solid ${evt.severity === "critical" ? "#FF3B5C22" : "transparent"}`,
+                  transition: "background 0.4s",
+                  animation: isNew ? "fadeSlideIn 0.2s ease" : undefined,
                 }}
               >
                 {/* Severity dot */}
-                <div style={{
-                  width: 6, height: 6, borderRadius: '50%', background: sc,
-                  boxShadow: evt.severity === 'critical' ? `0 0 6px ${sc}` : 'none',
-                  marginTop: 5, flexShrink: 0,
-                }} />
+                <div
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    background: sc,
+                    boxShadow:
+                      evt.severity === "critical" ? `0 0 6px ${sc}` : "none",
+                    marginTop: 5,
+                    flexShrink: 0,
+                  }}
+                />
 
                 {/* Timestamp */}
-                <span style={{ fontSize: 10, color: '#4A6A8A', fontFamily: 'JetBrains Mono, monospace', minWidth: 90, marginTop: 2, flexShrink: 0 }}>
+                <span
+                  style={{
+                    fontSize: 10,
+                    color: "#e6acfaff",
+                    fontFamily: "JetBrains Mono, monospace",
+                    minWidth: 90,
+                    marginTop: 2,
+                    flexShrink: 0,
+                  }}
+                >
                   {evt.ts}
                 </span>
 
                 {/* Type badge */}
-                <span style={{
-                  fontSize: 10, fontFamily: 'JetBrains Mono, monospace', fontWeight: 700,
-                  color: tc, background: `${tc}15`, border: `1px solid ${tc}33`,
-                  borderRadius: 4, padding: '1px 6px', flexShrink: 0,
-                }}>
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontFamily: "JetBrains Mono, monospace",
+                    fontWeight: 700,
+                    color: tc,
+                    background: `${tc}15`,
+                    border: `1px solid ${tc}33`,
+                    borderRadius: 4,
+                    padding: "1px 6px",
+                    flexShrink: 0,
+                  }}
+                >
                   {TYPE_ICONS[evt.type]} {evt.type}
                 </span>
 
                 {/* Pod */}
-                <span style={{ fontSize: 10, color: '#00D4FF', fontFamily: 'JetBrains Mono, monospace', minWidth: 100, flexShrink: 0 }}>
+                <span
+                  style={{
+                    fontSize: 10,
+                    color: "#00D4FF",
+                    fontFamily: "JetBrains Mono, monospace",
+                    minWidth: 100,
+                    flexShrink: 0,
+                  }}
+                >
                   {evt.pod}
                 </span>
 
                 {/* Detail */}
-                <span style={{ fontSize: 11, color: '#8899AA', flex: 1, lineHeight: 1.4, fontFamily: 'JetBrains Mono, monospace', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: "#e6acfaff",
+                    flex: 1,
+                    lineHeight: 1.4,
+                    fontFamily: "JetBrains Mono, monospace",
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {evt.detail}
                 </span>
 
                 {/* Node */}
-                <span style={{ fontSize: 9, color: '#4A6A8A', fontFamily: 'JetBrains Mono, monospace', flexShrink: 0 }}>
+                <span
+                  style={{
+                    fontSize: 9,
+                    color: "#f1dbf8ff",
+                    fontFamily: "JetBrains Mono, monospace",
+                    flexShrink: 0,
+                  }}
+                >
                   {evt.node}
                 </span>
               </div>
@@ -186,19 +245,19 @@ export const EBPFTab: React.FC = () => {
                 <GlowBadge severity="info" label="ACTIVE" />
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 9, color: '#4A6A8A' }}>events</span>
+                <span style={{ fontSize: 9, color: '#c9cacaff' }}>events</span>
                 <span style={{ fontSize: 9, color: '#FFB800', fontFamily: 'JetBrains Mono, monospace' }}>{p.events.toLocaleString()}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 9, color: '#4A6A8A' }}>overhead</span>
+                <span style={{ fontSize: 9, color: '#b1b2b2ff' }}>overhead</span>
                 <span style={{ fontSize: 9, color: '#00FF9F', fontFamily: 'JetBrains Mono, monospace' }}>{p.overhead}</span>
               </div>
             </div>
           ))}
           <div style={{ marginTop: 4, padding: '6px 10px', background: '#040C1A', borderRadius: 6, border: '1px solid #0D2244' }}>
-            <div style={{ fontSize: 10, color: '#4A6A8A' }}>Total eBPF overhead</div>
+            <div style={{ fontSize: 10, color: '#9dccfcff' }}>Total eBPF overhead</div>
             <div style={{ fontSize: 14, fontWeight: 700, color: '#00FF9F', fontFamily: 'JetBrains Mono, monospace' }}>0.71%</div>
-            <div style={{ fontSize: 9, color: '#4A6A8A', marginTop: 2 }}>Target &lt;1%</div>
+            <div style={{ fontSize: 9, color: '#9bcbfaff', marginTop: 2 }}>Target &lt;1%</div>
           </div>
         </div>
       </div>

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useClusterStore }  from '@/stores/useClusterStore';
 import { useIncidentStore } from '@/stores/useIncidentStore';
 import { ToastContainer }   from './Toast';
-
+import type { LucideIcon } from "lucide-react";
 // Tab imports
 import TopologyTab     from '@/components/topology/TopologyTab';
 import IntelligenceTab from '@/components/intelligence/IntelligenceTab';
@@ -27,20 +27,26 @@ type TabId = 'topology' | 'intelligence' | 'guardian' | 'copilot' | 'ebpf' | 'in
 
 interface NavItem {
   id: TabId;
-  icon: React.ReactNode;
+  icon: LucideIcon; // React component
   label: string;
   badge?: number | string;
+  color: string;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: "topology",      icon: <Hexagon size={16} />, label: "Topology" },
-  { id: "intelligence",  icon: <Brain size={16} />, label: "Intelligence" },
-  { id: "guardian",      icon: <Shield size={16} />, label: "Guardian" },
-  { id: "copilot",       icon: <MessageSquare size={16} />, label: "Co-Pilot" },
-  { id: "ebpf",          icon: <Zap size={16} />, label: "eBPF Sensors" },
-  { id: "incidents",     icon: <AlertTriangle size={16} />, label: "Incidents" },
-  { id: "notifications", icon: <Bell size={16} />, label: "Notifications" },
-  { id: "settings",      icon: <Settings size={16} />, label: "Settings" },
+  { id: "topology", icon: Hexagon, color: "#34D399", label: "Topology" },
+  { id: "intelligence", icon: Brain, color: "#22D3EE", label: "Intelligence" },
+  { id: "guardian", icon: Shield, color: "#A78BFA", label: "Guardian" },
+  { id: "copilot", icon: MessageSquare, color: "#FBBF24", label: "Co-Pilot" },
+  { id: "ebpf", icon: Zap, color: "#00FF9F", label: "eBPF Sensors" },
+  {
+    id: "incidents",
+    icon: AlertTriangle,
+    color: "#FF3B5C",
+    label: "Incidents",
+  },
+  { id: "notifications", icon: Bell, color: "#FFB800", label: "Notifications" },
+  { id: "settings", icon: Settings, color: "#E5E7EB", label: "Settings" },
 ];
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
@@ -122,44 +128,53 @@ function NavBtn({
       onMouseLeave={() => setHovered(false)}
       title={item.label}
       style={{
-        position:       'relative',
-        width:          40,
-        height:         40,
-        border:         'none',
-        borderRadius:   8,
-        cursor:         'pointer',
-        display:        'flex',
-        alignItems:     'center',
-        justifyContent: 'center',
-        fontSize:       16,
-        background:     active
-          ? '#00D4FF15'
-          : hovered ? '#0D2244' : 'transparent',
-        outline:        active ? '1px solid #00D4FF44' : 'none',
-        transition:     'all 0.15s',
-        flexShrink:     0,
+        position: "relative",
+        width: 40,
+        height: 40,
+        border: "none",
+        borderRadius: 8,
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: 16,
+        background: active ? "#00D4FF15" : hovered ? "#0D2244" : "transparent",
+        outline: active ? "1px solid #00D4FF44" : "none",
+        transition: "all 0.15s",
+        flexShrink: 0,
       }}
     >
-      {item.icon}
+      {(() => {
+        const Icon = item.icon;
+        return (
+          <Icon
+            size={18}
+            color={active ? item.color : "#6B9BD1"}
+            style={{
+              filter: active ? `drop-shadow(0 0 6px ${item.color})` : "none",
+            }}
+          />
+        );
+      })()}
       {badge !== undefined && Number(badge) > 0 && (
         <span
           style={{
-            position:     'absolute',
-            top:          2,
-            right:        2,
-            width:        14,
-            height:       14,
-            borderRadius: '50%',
-            background:   '#FF3B5C',
-            color:        '#fff',
-            fontSize:     8,
-            fontWeight:   700,
-            display:      'flex',
-            alignItems:   'center',
-            justifyContent: 'center',
+            position: "absolute",
+            top: 2,
+            right: 2,
+            width: 14,
+            height: 14,
+            borderRadius: "50%",
+            background: "#FF3B5C",
+            color: "#fff",
+            fontSize: 8,
+            fontWeight: 700,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
         >
-          {Number(badge) > 9 ? '9+' : badge}
+          {Number(badge) > 9 ? "9+" : badge}
         </span>
       )}
     </button>
@@ -266,7 +281,7 @@ export const Layout: React.FC = () => {
                     background: l.color, boxShadow: `0 0 6px ${l.color}`,
                     animation: 'pulse 2s infinite',
                   }} />
-                  <span style={{ fontSize: 10, color: '#4A6A8A', fontFamily: 'JetBrains Mono, monospace' }}>
+                  <span style={{ fontSize: 10, color: '#e5c6fbff', fontFamily: 'JetBrains Mono, monospace' }}>
                     {l.label}
                   </span>
                 </div>
@@ -284,7 +299,7 @@ export const Layout: React.FC = () => {
               </div>
             )}
 
-            <span style={{ fontSize: 12, color: '#4A6A8A', fontFamily: 'JetBrains Mono, monospace' }}>
+            <span style={{ fontSize: 12, color: '#e6c3f9ff', fontFamily: 'JetBrains Mono, monospace' }}>
               {clock} UTC
             </span>
           </div>

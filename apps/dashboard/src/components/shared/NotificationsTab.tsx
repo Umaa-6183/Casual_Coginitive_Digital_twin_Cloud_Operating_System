@@ -13,11 +13,11 @@ const TYPE_COLORS: Record<Notification['type'], string> = {
 };
 
 const TYPE_ICONS: Record<Notification["type"], React.ReactNode> = {
-  alert: <AlertTriangle size={14} />,
-  action: <Zap size={14} />,
-  resolved: <CheckCircle size={14} />,
-  policy: <Shield size={14} />,
-  info: <Info size={14} />,
+  alert: <AlertTriangle size={14} color="#FF3B5C" />,
+  action: <Zap size={14} color="#9B5DE5" />,
+  resolved: <CheckCircle size={14} color="#00FF9F" />,
+  policy: <Shield size={14} color="#00D4FF" />,
+  info: <Info size={14} color="#FFB800" />,
 };
 
 const FILTERS: { id: FilterType; label: string }[] = [

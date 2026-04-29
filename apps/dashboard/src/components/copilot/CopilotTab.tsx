@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { GhostPreviewModal } from "@/components/ghost/GhostPreviewModal";
 import type { ChatMessage, GhostAction } from "@/types";
-
+import { Zap, MessageSquare } from "lucide-react";
 interface Props {
   onOpenGhost?: (action: GhostAction) => void;
 }
@@ -33,7 +33,7 @@ function detectProposedAction(text: string): GhostAction | null {
   const actionName = actionMap[match[1]] ?? match[1];
   return {
     label: `${match[1]} on ${match[2]}`,
-    icon: "⚡",
+    icon: <Zap size={14} color="#FF8C00" />,
     actionName,
     targetNode: match[2],
   };
@@ -366,11 +366,19 @@ export const CopilotTab: React.FC<Props> = () => {
         {/* Empty state */}
         {messages.length === 0 && (
           <div style={{ textAlign: "center", marginTop: 40, color: "#4A6A8A" }}>
-            <div style={{ fontSize: 36, marginBottom: 12 }}>💬</div>
-            <div style={{ fontSize: 14, marginBottom: 6, color: "#8899AA" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                marginBottom: 12,
+              }}
+            >
+              <MessageSquare size={36} color="#FFD60A" />
+            </div>
+            <div style={{ fontSize: 14, marginBottom: 6, color: "#f0eff1ff" }}>
               CCDT Co-Pilot
             </div>
-            <div style={{ fontSize: 12 }}>
+            <div style={{ fontSize: 12, color: "#f3f3f4ff" }}>
               Ask about incidents, root causes, or request remediation proposals
             </div>
             <div
@@ -390,7 +398,7 @@ export const CopilotTab: React.FC<Props> = () => {
                     background: "#06111F",
                     border: "1px solid #0D2244",
                     borderRadius: 6,
-                    color: "#8899AA",
+                    color: "#cdb8ffff",
                     fontSize: 11,
                     padding: "5px 10px",
                     cursor: "pointer",
@@ -495,8 +503,19 @@ export const CopilotTab: React.FC<Props> = () => {
               justifyContent: "space-between",
             }}
           >
-            <div style={{ fontSize: 12, color: "#9B5DE5" }}>
-              ⚡ Proposed action detected: <strong>{ghostAction.label}</strong>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 12,
+                color: "#9B5DE5",
+              }}
+            >
+              <Zap size={14} color="#FF8C00" />
+              <span>
+                Proposed action detected: <strong>{ghostAction.label}</strong>
+              </span>
             </div>
             <button
               onClick={() => setGhostAction(ghostAction)}

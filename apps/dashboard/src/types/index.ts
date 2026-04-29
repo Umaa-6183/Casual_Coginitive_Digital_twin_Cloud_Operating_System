@@ -45,7 +45,7 @@ export interface Alert {
 export interface TimelineEvent {
   time:   string;
   event:  string;
-  icon:   React.ReactNode;
+  icon:   string;
 }
 
 export interface Incident {

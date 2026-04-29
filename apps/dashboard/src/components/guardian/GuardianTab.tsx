@@ -69,10 +69,10 @@ export const GuardianTab: React.FC<Props> = () => {
               >
                 {k.value}
               </div>
-              <div style={{ fontSize: 12, color: "#8899AA", marginTop: 4 }}>
+              <div style={{ fontSize: 12, color: "#dadbdcff", marginTop: 4 }}>
                 {k.label}
               </div>
-              <div style={{ fontSize: 10, color: "#4A6A8A", marginTop: 2 }}>
+              <div style={{ fontSize: 10, color: "#dbeaf9ff", marginTop: 2 }}>
                 Target: {k.target}
               </div>
             </div>
@@ -92,14 +92,14 @@ export const GuardianTab: React.FC<Props> = () => {
             style={{
               fontSize: 12,
               fontWeight: 600,
-              color: "#C8D8E8",
+              color: "#ffffffff",
               marginBottom: 16,
               display: "flex",
               alignItems: "center",
               gap: 6,
             }}
           >
-            <Shield size={14} />
+            <Shield size={14} color="#9B5DE5" />
             <span>OPA Policy Engine</span>
             <span
               style={{
@@ -149,7 +149,7 @@ export const GuardianTab: React.FC<Props> = () => {
                   />
                 </div>
                 <div
-                  style={{ fontSize: 11, color: "#4A6A8A", lineHeight: 1.4 }}
+                  style={{ fontSize: 11, color: "#fafcfcff", lineHeight: 1.4 }}
                 >
                   {p.description}
                 </div>
@@ -171,14 +171,14 @@ export const GuardianTab: React.FC<Props> = () => {
             style={{
               fontSize: 12,
               fontWeight: 600,
-              color: "#C8D8E8",
+              color: "#f9faf9ff",
               marginBottom: 16,
               display: "flex",
               alignItems: "center",
               gap: 6,
             }}
           >
-            <Zap size={14} />
+            <Zap size={14} color="#FF8C00" />
             <span>RL-Proposed Remediations</span>
           </div>
           {RL_ACTIONS.map((a) => {
@@ -229,7 +229,7 @@ export const GuardianTab: React.FC<Props> = () => {
                 <div
                   style={{
                     fontSize: 11,
-                    color: "#8899AA",
+                    color: "#f7f9fcff",
                     lineHeight: 1.4,
                     marginBottom: 8,
                   }}
@@ -260,10 +260,13 @@ export const GuardianTab: React.FC<Props> = () => {
                     cursor: "pointer",
                     background: "#9B5DE515",
                     border: "1px solid #9B5DE544",
-                    color: "#9B5DE5",
+                    color: "#ffffff",
                     fontSize: 11,
                     fontWeight: 600,
                     transition: "background 0.15s",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
                   }}
                   onMouseEnter={(e) =>
                     (e.currentTarget.style.background = "#9B5DE525")
@@ -272,7 +275,7 @@ export const GuardianTab: React.FC<Props> = () => {
                     (e.currentTarget.style.background = "#9B5DE515")
                   }
                 >
-                  <Ghost size={14} />
+                  <Ghost size={14} color="#ffffff" />
                   <span>Ghost Preview</span>
                 </button>
               </div>
