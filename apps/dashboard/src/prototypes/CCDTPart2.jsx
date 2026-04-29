@@ -1,16 +1,49 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import {
+  Zap,
+  AlertCircle,
+  Brain,
+  Shield,
+  CheckCircle,
+  BarChart3,
+  Globe,
+  MessageSquare,
+  Bell,
+  Settings,
+  Skull,
+  Ghost,
+  Hourglass,
+  Timer,
+  Folder,
+  Key,
+  Search,
+  Info,
+} from "lucide-react";
 
 // ─── THEME ────────────────────────────────────────────────────────────────────
 const T = {
-  bg: "#030810", bg1: "#070F1C", bg2: "#0B1628", bg3: "#0F1E35",
-  border: "#112240", borderHi: "#1A3A6A",
-  cyan: "#00D4FF", cyanDim: "#00D4FF55", cyanBright: "#60EFFF",
-  green: "#00FF9F", greenDim: "#00FF9F33",
-  red: "#FF3B5C", redDim: "#FF3B5C22",
-  orange: "#FF8C00", orangeDim: "#FF8C0022",
-  yellow: "#FFD60A", yellowDim: "#FFD60A22",
-  purple: "#9B5DE5", purpleDim: "#9B5DE522",
-  text: "#C8D8E8", textDim: "#5A7A99", textBright: "#E8F4FF",
+  bg: "#0b1220",
+  bg1: "#111827",
+  bg2: "#1f2937",
+  bg3: "#374151",
+  border: "#112240",
+  borderHi: "#1A3A6A",
+  cyan: "#00D4FF",
+  cyanDim: "#00D4FF55",
+  cyanBright: "#60EFFF",
+  green: "#00FF9F",
+  greenDim: "#00FF9F33",
+  red: "#FF3B5C",
+  redDim: "#FF3B5C22",
+  orange: "#FF8C00",
+  orangeDim: "#FF8C0022",
+  yellow: "#FFD60A",
+  yellowDim: "#FFD60A22",
+  purple: "#9B5DE5",
+  purpleDim: "#9B5DE522",
+  text: "#C8D8E8",
+  textDim: "#5A7A99",
+  textBright: "#E8F4FF",
 };
 
 const MONO = "'JetBrains Mono', 'Fira Code', monospace";
@@ -79,13 +112,13 @@ const Panel = ({ title, badge, children, style = {}, headerRight }) => (
 
 // ─── KERNEL EVENT STREAM ───────────────────────────────────────────────────────
 const EVENT_TYPES = {
-  "syscall": { color: T.orange, icon: "⚡" },
-  "oom": { color: T.red, icon: "💀" },
-  "tcp": { color: T.cyan, icon: "🌐" },
-  "sched": { color: T.green, icon: "⏱" },
-  "file": { color: T.purple, icon: "📁" },
-  "capability": { color: T.red, icon: "🔑" },
-  "probe": { color: T.textDim, icon: "🔍" },
+  syscall: { color: T.orange, icon: <Zap size={14} /> },
+  oom: { color: T.red, icon: <Skull size={14} /> },
+  tcp: { color: T.cyan, icon: <Globe size={14} /> },
+  sched: { color: T.green, icon: <Timer size={14} /> },
+  file: { color: T.purple, icon: <Folder size={14} /> },
+  capability: { color: T.red, icon: <Key size={14} /> },
+  probe: { color: T.textDim, icon: <Search size={14} /> },
 };
 
 const SEED_EVENTS = [
@@ -249,68 +282,180 @@ function EBPFStream() {
 // ─── INCIDENT MANAGER ─────────────────────────────────────────────────────────
 const INCIDENTS = [
   {
-    id: "INC-2847", title: "Cryptominer detected in order-svc via privilege escalation",
-    severity: "critical", status: "active", type: "attack",
-    opened: "14:32:07", mttr_target: "8 min", elapsed: "6m 23s",
+    id: "INC-2847",
+    title: "Cryptominer detected in order-svc via privilege escalation",
+    severity: "critical",
+    status: "active",
+    type: "attack",
+    opened: "14:32:07",
+    mttr_target: "8 min",
+    elapsed: "6m 23s",
     node: "order-svc-7f8b / node-2",
-    root_cause: "Container escape via CAP_SYS_ADMIN → xmrig binary execution → C&C beaconing",
+    root_cause:
+      "Container escape via CAP_SYS_ADMIN → xmrig binary execution → C&C beaconing",
     affected: ["order-svc", "postgres", "user-svc"],
-    confidence: 94, auto_action: "Pending Ghost Preview approval",
+    confidence: 94,
+    auto_action: "Pending Ghost Preview approval",
     timeline: [
-      { t: "14:32:07", event: "eBPF: privilege escalation detected", icon: "⚡" },
-      { t: "14:32:08", event: "GNN: root cause identified (94% confidence)", icon: "🧠" },
-      { t: "14:32:08", event: "GNN: classified as ATTACK (not fault)", icon: "🔴" },
-      { t: "14:32:09", event: "RL: action proposed — isolate + block IP", icon: "🛡" },
-      { t: "14:32:09", event: "Ghost Preview: simulation complete (PASS)", icon: "👻" },
-      { t: "14:32:09", event: "OPA: all 5 policies satisfied", icon: "✓" },
-      { t: "14:32:10", event: "Awaiting SRE approval (human-in-the-loop mode)", icon: "⏳" },
+      {
+        t: "14:32:07",
+        event: "eBPF: privilege escalation detected",
+        icon: <Zap size={14} />,
+      },
+      {
+        t: "14:32:08",
+        event: "GNN: root cause identified (94% confidence)",
+        icon: <Brain size={14} />,
+      },
+      {
+        t: "14:32:08",
+        event: "GNN: classified as ATTACK (not fault)",
+        icon: <AlertCircle size={14} />,
+      },
+      {
+        t: "14:32:09",
+        event: "RL: action proposed — isolate + block IP",
+        icon: <Shield size={14} />,
+      },
+      {
+        t: "14:32:09",
+        event: "Ghost Preview: simulation complete (PASS)",
+        icon: <Ghost size={14} />,
+      },
+      {
+        t: "14:32:09",
+        event: "OPA: all 5 policies satisfied",
+        icon: <CheckCircle size={14} />,
+      },
+      {
+        t: "14:32:10",
+        event: "Awaiting SRE approval (human-in-the-loop mode)",
+        icon: <Hourglass size={14} />,
+      },
     ],
   },
   {
-    id: "INC-2846", title: "PostgreSQL memory pressure — OOM risk at 79%",
-    severity: "warning", status: "investigating", type: "fault",
-    opened: "14:31:55", mttr_target: "15 min", elapsed: "6m 35s",
+    id: "INC-2846",
+    title: "PostgreSQL memory pressure — OOM risk at 79%",
+    severity: "warning",
+    status: "investigating",
+    type: "fault",
+    opened: "14:31:55",
+    mttr_target: "15 min",
+    elapsed: "6m 35s",
     node: "postgres-0 / node-1",
-    root_cause: "High connection count from order-svc (cascading from INC-2847) + missing connection pool limit",
+    root_cause:
+      "High connection count from order-svc (cascading from INC-2847) + missing connection pool limit",
     affected: ["postgres", "user-svc"],
-    confidence: 81, auto_action: "RL: increase memory limit + restart with new config",
+    confidence: 81,
+    auto_action: "RL: increase memory limit + restart with new config",
     timeline: [
-      { t: "14:31:55", event: "eBPF: OOM score 742 detected", icon: "⚡" },
-      { t: "14:31:56", event: "GNN: causal link to INC-2847 established", icon: "🧠" },
-      { t: "14:31:57", event: "GNN: classified as FAULT (cascading)", icon: "🟡" },
-      { t: "14:31:58", event: "RL: action proposed — memory limit + restart", icon: "🛡" },
+      {
+        t: "14:31:55",
+        event: "eBPF: OOM score 742 detected",
+        icon: <Zap size={14} />,
+      },
+      {
+        t: "14:31:56",
+        event: "GNN: causal link to INC-2847 established",
+        icon: <Brain size={14} />,
+      },
+      {
+        t: "14:31:57",
+        event: "GNN: classified as FAULT (cascading)",
+        icon: <AlertTriangle size={14} />,
+      },
+      {
+        t: "14:31:58",
+        event: "RL: action proposed — memory limit + restart",
+        icon: <Shield size={14} />,
+      },
     ],
   },
   {
-    id: "INC-2845", title: "Auth service brute-force attempt pattern detected",
-    severity: "warning", status: "auto-resolved", type: "attack",
-    opened: "14:31:22", mttr_target: "5 min", elapsed: "resolved in 2m 11s",
+    id: "INC-2845",
+    title: "Auth service brute-force attempt pattern detected",
+    severity: "warning",
+    status: "auto-resolved",
+    type: "attack",
+    opened: "14:31:22",
+    mttr_target: "5 min",
+    elapsed: "resolved in 2m 11s",
     node: "auth-svc-5c9d / node-3",
-    root_cause: "847 getpeername() calls/sec from 3 external IPs — rate limit triggered",
+    root_cause:
+      "847 getpeername() calls/sec from 3 external IPs — rate limit triggered",
     affected: ["auth-svc"],
-    confidence: 88, auto_action: "IP rate-limit applied autonomously (OPA approved)",
+    confidence: 88,
+    auto_action: "IP rate-limit applied autonomously (OPA approved)",
     timeline: [
-      { t: "14:31:22", event: "eBPF: syscall anomaly detected (847/s)", icon: "⚡" },
-      { t: "14:31:23", event: "GNN: brute force pattern (88% confidence)", icon: "🧠" },
-      { t: "14:31:24", event: "RL + OPA: rate-limit approved", icon: "✓" },
-      { t: "14:31:33", event: "Executor: NetworkPolicy applied", icon: "⚙" },
-      { t: "14:33:33", event: "RESOLVED — attack traffic dropped to 0", icon: "✅" },
+      {
+        t: "14:31:22",
+        event: "eBPF: syscall anomaly detected (847/s)",
+        icon: <Zap size={14} />,
+      },
+      {
+        t: "14:31:23",
+        event: "GNN: brute force pattern (88% confidence)",
+        icon: <Brain size={14} />,
+      },
+      {
+        t: "14:31:24",
+        event: "RL + OPA: rate-limit approved",
+        icon: <CheckCircle size={14} />,
+      },
+      {
+        t: "14:31:33",
+        event: "Executor: NetworkPolicy applied",
+        icon: <Settings size={14} />,
+      },
+      {
+        t: "14:33:33",
+        event: "RESOLVED — attack traffic dropped to 0",
+        icon: <CheckCircle size={14} />,
+      },
     ],
   },
   {
-    id: "INC-2844", title: "Scheduler latency spike on node-3 (p99: 184ms)",
-    severity: "info", status: "resolved", type: "fault",
-    opened: "14:29:18", mttr_target: "10 min", elapsed: "resolved in 3m 44s",
+    id: "INC-2844",
+    title: "Scheduler latency spike on node-3 (p99: 184ms)",
+    severity: "info",
+    status: "resolved",
+    type: "fault",
+    opened: "14:29:18",
+    mttr_target: "10 min",
+    elapsed: "resolved in 3m 44s",
     node: "node-3 (cluster-level)",
-    root_cause: "CPU resource contention from ML service batch job — autoscaler triggered",
+    root_cause:
+      "CPU resource contention from ML service batch job — autoscaler triggered",
     affected: ["ml-svc", "ingress"],
-    confidence: 76, auto_action: "ML-svc replica scaling applied (×2)",
+    confidence: 76,
+    auto_action: "ML-svc replica scaling applied (×2)",
     timeline: [
-      { t: "14:29:18", event: "eBPF: sched_latency p99 spike", icon: "⚡" },
-      { t: "14:29:19", event: "GNN: contention root cause identified", icon: "🧠" },
-      { t: "14:29:20", event: "RL: scale ml-svc replicas proposed", icon: "🛡" },
-      { t: "14:29:22", event: "HPA scaling triggered autonomously", icon: "⚙" },
-      { t: "14:33:02", event: "RESOLVED — latency back to 11ms p99", icon: "✅" },
+      {
+        t: "14:29:18",
+        event: "eBPF: sched_latency p99 spike",
+        icon: <Zap size={14} />,
+      },
+      {
+        t: "14:29:19",
+        event: "GNN: contention root cause identified",
+        icon: <Brain size={14} />,
+      },
+      {
+        t: "14:29:20",
+        event: "RL: scale ml-svc replicas proposed",
+        icon: <Shield size={14} />,
+      },
+      {
+        t: "14:29:22",
+        event: "HPA scaling triggered autonomously",
+        icon: <Settings size={14} />,
+      },
+      {
+        t: "14:33:02",
+        event: "RESOLVED — latency back to 11ms p99",
+        icon: <CheckCircle size={14} />,
+      },
     ],
   },
 ];
@@ -466,7 +611,13 @@ function NotificationCenter() {
   const [filter, setFilter] = useState("all");
   const unread = notifications.filter(n => !n.read).length;
 
-  const typeIcon = { alert: "🔴", action: "👻", resolved: "✅", policy: "🛡", info: "ℹ" };
+  const typeIcon = {
+    alert: <AlertCircle size={14} />,
+    action: <Ghost size={14} />,
+    resolved: <CheckCircle size={14} />,
+    policy: <Shield size={14} />,
+    info: <Info size={14} />,
+  };
 
   const filtered = notifications.filter(n => filter === "all" || n.type === filter);
 
@@ -680,33 +831,98 @@ function Settings() {
 // ─── TICKER BAR ───────────────────────────────────────────────────────────────
 function TickerBar() {
   const items = [
-    "⚡ eBPF: 847 events/sec",
-    "🔴 INC-2847: Cryptominer active in order-svc — Ghost Preview ready",
-    "🧠 GNN: 94.2% confidence on root cause identification",
-    "🛡 OPA: 5/5 policies active — 2 violations flagged",
-    "✅ INC-2845: Auto-resolved in 2m 11s",
-    "📊 MTTR reduction: 68% vs baseline",
-    "🌐 Cluster: 10 nodes healthy — 3 incidents tracked",
-    "💬 Co-Pilot: claude-sonnet-4 online — causal reasoning active",
-  ].join("     ·     ");
+    { icon: <Zap size={12} />, text: "eBPF: 847 events/sec" },
+    {
+      icon: <AlertCircle size={12} />,
+      text: "INC-2847: Cryptominer active in order-svc — Ghost Preview ready",
+    },
+    {
+      icon: <Brain size={12} />,
+      text: "GNN: 94.2% confidence on root cause identification",
+    },
+    {
+      icon: <Shield size={12} />,
+      text: "OPA: 5/5 policies active — 2 violations flagged",
+    },
+    {
+      icon: <CheckCircle size={12} />,
+      text: "INC-2845: Auto-resolved in 2m 11s",
+    },
+    { icon: <BarChart3 size={12} />, text: "MTTR reduction: 68% vs baseline" },
+    {
+      icon: <Globe size={12} />,
+      text: "Cluster: 10 nodes healthy — 3 incidents tracked",
+    },
+    {
+      icon: <MessageSquare size={12} />,
+      text: "Co-Pilot: claude-sonnet-4 online — causal reasoning active",
+    },
+  ];
+
+  const ticker = [...items, ...items];
 
   return (
-    <div style={{ height: 28, background: T.bg2, borderBottom: `1px solid ${T.border}`, overflow: "hidden", position: "relative" }}>
-      <div style={{
-        display: "inline-block", whiteSpace: "nowrap", color: T.textDim,
-        fontSize: 10, fontFamily: MONO, letterSpacing: .4,
-        animation: "ticker 40s linear infinite", paddingTop: 6,
-      }}>{items + "     ·     " + items}</div>
+    <div
+      style={{
+        height: 28,
+        background: T.bg2,
+        borderBottom: `1px solid ${T.border}`,
+        overflow: "hidden",
+        position: "relative",
+      }}
+    >
+      <div
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 24,
+          whiteSpace: "nowrap",
+          color: T.textDim,
+          fontSize: 10,
+          fontFamily: MONO,
+          letterSpacing: 0.4,
+          animation: "ticker 40s linear infinite",
+          paddingTop: 6,
+        }}
+      >
+        {ticker.map((item, i) => (
+          <div
+            key={i}
+            style={{ display: "flex", alignItems: "center", gap: 6 }}
+          >
+            {item.icon}
+            <span>{item.text}</span>
+            <span style={{ opacity: 0.3 }}>·</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
+
+
 const NAV = [
-  { id: "ebpf", icon: "⚡", label: "eBPF Sensors", badge: "LIVE" },
-  { id: "incidents", icon: "🚨", label: "Incidents", badge: "2 ACTIVE" },
-  { id: "notify", icon: "🔔", label: "Notifications", badge: "3 NEW" },
-  { id: "settings", icon: "⚙", label: "Settings", badge: null },
+  { id: "ebpf", icon: <Zap size={16} />, label: "eBPF Sensors", badge: "LIVE" },
+  {
+    id: "incidents",
+    icon: <AlertTriangle size={16} />,
+    label: "Incidents",
+    badge: "2 ACTIVE",
+  },
+  {
+    id: "notify",
+    icon: <Bell size={16} />,
+    label: "Notifications",
+    badge: "3 NEW",
+  },
+  {
+    id: "settings",
+    icon: <Settings size={16} />,
+    label: "Settings",
+    badge: null,
+  },
 ];
 
 export default function CCDTPart2() {

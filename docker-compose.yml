@@ -72,6 +72,7 @@ volumes:
     driver: local
   demo-postgres-data:
     driver: local
+  ollama-data:
   # SQLite database file (incidents, policies, chaos runs)
   ccdt-data:
     driver: local
@@ -376,8 +377,12 @@ services:
         condition: service_healthy
       layer3-guardian:
         condition: service_healthy
+      ollama:
+        condition: service_started
     environment:
       <<: *kafka-env
+      GROQ_API_KEY:            ${GROQ_API_KEY}
+      GROQ_MODEL:              llama-3.3-70b-versatile
       GEMINI_API_KEY:          ${GEMINI_API_KEY:?Set GEMINI_API_KEY in .env}
       GEMINI_MODEL:            gemini-2.5-flash
       MAX_TOKENS:              "2048"
@@ -389,6 +394,8 @@ services:
       CONTEXT_FETCH_TIMEOUT_S: "3.0"
       LOG_LEVEL:               info
       PYTHONUNBUFFERED:        "1"
+      OLLAMA_BASE_URL:         ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL:            ${OLLAMA_MODEL:-llama3.2:1b}
     volumes:
       - ./services/layer4-copilot:/app:cached
       - ./shared:/app/shared:ro
@@ -396,7 +403,16 @@ services:
       <<: *hc-defaults
       test: ["CMD", "curl", "-fsSo", "/dev/null", "http://localhost:8003/health"]
     logging: *default-logging
-
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ccdt-ollama-1
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - ccdt-net
   # ────────────────────────────────────────────────────────────────────────────
   # API Gateway
   # ────────────────────────────────────────────────────────────────────────────

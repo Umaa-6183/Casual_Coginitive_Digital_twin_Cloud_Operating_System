@@ -1,11 +1,32 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-
+import {
+  Zap,
+  Map,
+  AlertCircle,
+  Brain,
+  Shield,
+  CheckCircle,
+  BarChart3,
+  Globe,
+  MessageSquare,
+  Bell,
+  Settings,
+  Skull,
+  Ghost,
+  Hourglass,
+  Timer,
+  Folder,
+  Key,
+  Search,
+  Info,
+  Wrench
+} from "lucide-react";
 // ─── THEME & CONSTANTS ───────────────────────────────────────────────────────
 const T = {
-  bg: "#030810",
-  bg1: "#070F1C",
-  bg2: "#0B1628",
-  bg3: "#0F1E35",
+  bg: "#0b1220",
+  bg1: "#111827",
+  bg2: "#1f2937",
+  bg3: "#374151",
   border: "#112240",
   borderGlow: "#00D4FF22",
   cyan: "#00D4FF",
@@ -478,7 +499,7 @@ Keep responses concise, technical, and actionable. Use markdown formatting. When
       if (reply.includes("PROPOSED ACTION:") || reply.toLowerCase().includes("isolate") || reply.toLowerCase().includes("block ip")) {
         setGhostAction({
           label: "Isolate order-svc container & block suspicious IP 10.0.0.47",
-          icon: "🛡️",
+          icon: <Shield size={16} />,
         });
       }
     } catch (err) {
@@ -619,53 +640,134 @@ function GuardianPanel({ onGhostPreview }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
       {/* OPA Policies */}
-      <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: 10, padding: 20 }}>
-        <div style={{ color: T.textDim, fontSize: 11, fontFamily: "'JetBrains Mono',monospace", letterSpacing: 1, marginBottom: 14 }}>
+      <div
+        style={{
+          background: T.bg1,
+          border: `1px solid ${T.border}`,
+          borderRadius: 10,
+          padding: 20,
+        }}
+      >
+        <div
+          style={{
+            color: T.textDim,
+            fontSize: 11,
+            fontFamily: "'JetBrains Mono',monospace",
+            letterSpacing: 1,
+            marginBottom: 14,
+          }}
+        >
           OPA SAFETY POLICIES
         </div>
         {policies.map((p) => (
-          <div key={p.id} style={{
-            padding: "10px 12px", background: T.bg2, borderRadius: 6,
-            border: `1px solid ${p.violations ? T.redDim : T.border}`,
-            marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center",
-          }}>
+          <div
+            key={p.id}
+            style={{
+              padding: "10px 12px",
+              background: T.bg2,
+              borderRadius: 6,
+              border: `1px solid ${p.violations ? T.redDim : T.border}`,
+              marginBottom: 8,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
             <div>
               <div style={{ color: T.textBright, fontSize: 12 }}>{p.name}</div>
-              <div style={{ color: T.textDim, fontSize: 10, marginTop: 2, fontFamily: "'JetBrains Mono',monospace" }}>{p.id}</div>
+              <div
+                style={{
+                  color: T.textDim,
+                  fontSize: 10,
+                  marginTop: 2,
+                  fontFamily: "'JetBrains Mono',monospace",
+                }}
+              >
+                {p.id}
+              </div>
             </div>
             <div style={{ textAlign: "right" }}>
-              {p.violations > 0
-                ? <GlowBadge label={`${p.violations} VIOLATION`} color={T.red} />
-                : <GlowBadge label="PASS" color={T.green} />
-              }
+              {p.violations > 0 ? (
+                <GlowBadge label={`${p.violations} VIOLATION`} color={T.red} />
+              ) : (
+                <GlowBadge label="PASS" color={T.green} />
+              )}
             </div>
           </div>
         ))}
       </div>
 
       {/* RL Actions */}
-      <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: 10, padding: 20 }}>
-        <div style={{ color: T.textDim, fontSize: 11, fontFamily: "'JetBrains Mono',monospace", letterSpacing: 1, marginBottom: 14 }}>
+      <div
+        style={{
+          background: T.bg1,
+          border: `1px solid ${T.border}`,
+          borderRadius: 10,
+          padding: 20,
+        }}
+      >
+        <div
+          style={{
+            color: T.textDim,
+            fontSize: 11,
+            fontFamily: "'JetBrains Mono',monospace",
+            letterSpacing: 1,
+            marginBottom: 14,
+          }}
+        >
           RL-PROPOSED REMEDIATION ACTIONS
         </div>
         {rlActions.map((a, i) => (
-          <div key={i} style={{
-            padding: "12px", background: T.bg2, borderRadius: 6,
-            border: `1px solid ${T.border}`, marginBottom: 8,
-          }}>
-            <div style={{ color: T.textBright, fontSize: 12, marginBottom: 8 }}>{a.action}</div>
+          <div
+            key={i}
+            style={{
+              padding: "12px",
+              background: T.bg2,
+              borderRadius: 6,
+              border: `1px solid ${T.border}`,
+              marginBottom: 8,
+            }}
+          >
+            <div style={{ color: T.textBright, fontSize: 12, marginBottom: 8 }}>
+              {a.action}
+            </div>
             <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
               <GlowBadge label={`${a.confidence}% confidence`} color={T.cyan} />
-              <GlowBadge label={`Risk: ${a.risk}`} color={a.risk === "LOW" ? T.green : T.yellow} />
+              <GlowBadge
+                label={`Risk: ${a.risk}`}
+                color={a.risk === "LOW" ? T.green : T.yellow}
+              />
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ color: T.textDim, fontSize: 11 }}>Impact: {a.impact}</span>
-              <button onClick={() => onGhostPreview({ label: a.action, icon: "🛡️" })} style={{
-                padding: "5px 10px", background: `${T.purple}22`,
-                border: `1px solid ${T.purple}55`, borderRadius: 4,
-                color: T.purple, fontSize: 11, fontFamily: "'JetBrains Mono',monospace",
-                cursor: "pointer",
-              }}>👻 Ghost Preview</button>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <span style={{ color: T.textDim, fontSize: 11 }}>
+                Impact: {a.impact}
+              </span>
+              <button
+                onClick={() =>
+                  onGhostPreview({
+                    label: a.action,
+                    icon: <Shield size={16} />,
+                  })
+                }
+                style={{
+                  padding: "5px 10px",
+                  background: `${T.purple}22`,
+                  border: `1px solid ${T.purple}55`,
+                  borderRadius: 4,
+                  color: T.purple,
+                  fontSize: 11,
+                  fontFamily: "'JetBrains Mono',monospace",
+                  cursor: "pointer",
+                }}
+              >
+                <Ghost size={16} /> Ghost Preview
+              </button>
             </div>
           </div>
         ))}
@@ -833,22 +935,27 @@ export default function CCDTApp() {
   };
 
   const nav = [
-    { id: "topology", label: "Topology", icon: "🗺" },
-    { id: "intelligence", label: "Intelligence", icon: "🧠" },
-    { id: "guardian", label: "Guardian", icon: "🛡" },
-    { id: "copilot", label: "Co-Pilot", icon: "💬" },
-    { id: "validation", label: "Validation", icon: "📊" },
+    { id: "topology", label: "Topology", icon: <Map size={16} /> },
+    { id: "intelligence", label: "Intelligence", icon: <Brain size={16} /> },
+    { id: "guardian", label: "Guardian", icon: <Shield size={16} /> },
+    { id: "copilot", label: "Co-Pilot", icon: <MessageSquare size={16} /> },
+    { id: "validation", label: "Validation", icon: <BarChart3 size={16} /> },
   ];
 
   const systemStatus = nodes.some(n => n.status === "critical") ? "critical"
     : nodes.some(n => n.status === "warning") ? "warning" : "healthy";
 
   return (
-    <div style={{
-      background: T.bg, minHeight: "100vh", color: T.text,
-      fontFamily: "system-ui, -apple-system, sans-serif",
-    }}>
-      <style>{pulse}
+    <div
+      style={{
+        background: T.bg,
+        minHeight: "100vh",
+        color: T.text,
+        fontFamily: "system-ui, -apple-system, sans-serif",
+      }}
+    >
+      <style>
+        {pulse}
         {`
           * { box-sizing: border-box; margin: 0; padding: 0; }
           ::-webkit-scrollbar { width: 4px; } 
@@ -860,13 +967,25 @@ export default function CCDTApp() {
 
       {/* Toast */}
       {toast && (
-        <div style={{
-          position: "fixed", top: 20, right: 20, zIndex: 2000,
-          padding: "12px 20px", background: T.bg1, border: `1px solid ${toast.color}`,
-          borderRadius: 8, color: toast.color, fontFamily: "'JetBrains Mono',monospace",
-          fontSize: 12, animation: "fadeIn 0.3s ease",
-          boxShadow: `0 0 20px ${toast.color}44`,
-        }}>{toast.msg}</div>
+        <div
+          style={{
+            position: "fixed",
+            top: 20,
+            right: 20,
+            zIndex: 2000,
+            padding: "12px 20px",
+            background: T.bg1,
+            border: `1px solid ${toast.color}`,
+            borderRadius: 8,
+            color: toast.color,
+            fontFamily: "'JetBrains Mono',monospace",
+            fontSize: 12,
+            animation: "fadeIn 0.3s ease",
+            boxShadow: `0 0 20px ${toast.color}44`,
+          }}
+        >
+          {toast.msg}
+        </div>
       )}
 
       {/* Ghost Preview Modal */}
@@ -876,46 +995,113 @@ export default function CCDTApp() {
           onApprove={() => {
             setGhostModal(null);
             showToast(`✓ Action executed: ${ghostModal.label}`);
-            setNodes(prev => prev.map(n => n.id === "order-svc" ? { ...n, status: "healthy", cpu: 12 } : n));
+            setNodes((prev) =>
+              prev.map((n) =>
+                n.id === "order-svc" ? { ...n, status: "healthy", cpu: 12 } : n,
+              ),
+            );
           }}
           onReject={() => setGhostModal(null)}
         />
       )}
 
       {/* Top Nav */}
-      <div style={{
-        height: 60, background: T.bg1, borderBottom: `1px solid ${T.border}`,
-        display: "flex", alignItems: "center", padding: "0 24px",
-        justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100,
-      }}>
+      <div
+        style={{
+          height: 60,
+          background: T.bg1,
+          borderBottom: `1px solid ${T.border}`,
+          display: "flex",
+          alignItems: "center",
+          padding: "0 24px",
+          justifyContent: "space-between",
+          position: "sticky",
+          top: 0,
+          zIndex: 100,
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {/* Logo */}
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{
-              width: 36, height: 36, borderRadius: 8,
-              background: `linear-gradient(135deg, ${T.cyan}33, ${T.purple}33)`,
-              border: `1px solid ${T.cyanDim}`, display: "flex", alignItems: "center",
-              justifyContent: "center", fontSize: 18,
-            }}>⬡</div>
+            <div
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 8,
+                background: `linear-gradient(135deg, ${T.cyan}33, ${T.purple}33)`,
+                border: `1px solid ${T.cyanDim}`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 18,
+              }}
+            >
+              ⬡
+            </div>
             <div>
-              <div style={{ color: T.cyanBright, fontFamily: "'JetBrains Mono',monospace", fontSize: 14, fontWeight: 700, letterSpacing: 1 }}>CCDT</div>
-              <div style={{ color: T.textDim, fontSize: 10, letterSpacing: 1 }}>CLOUD COGNITIVE DIGITAL TWIN</div>
+              <div
+                style={{
+                  color: T.cyanBright,
+                  fontFamily: "'JetBrains Mono',monospace",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  letterSpacing: 1,
+                }}
+              >
+                CCDT
+              </div>
+              <div style={{ color: T.textDim, fontSize: 10, letterSpacing: 1 }}>
+                CLOUD COGNITIVE DIGITAL TWIN
+              </div>
             </div>
           </div>
 
           {/* System status */}
-          <div style={{
-            padding: "4px 12px", borderRadius: 4,
-            background: systemStatus === "critical" ? T.redDim : systemStatus === "warning" ? T.orangeDim : T.greenDim,
-            border: `1px solid ${systemStatus === "critical" ? T.red : systemStatus === "warning" ? T.orange : T.green}44`,
-            display: "flex", alignItems: "center", gap: 6,
-          }}>
-            <span style={{
-              width: 7, height: 7, borderRadius: "50%",
-              background: systemStatus === "critical" ? T.red : systemStatus === "warning" ? T.orange : T.green,
-              display: "inline-block", animation: systemStatus !== "healthy" ? "pulse 1.2s infinite" : "none",
-            }} />
-            <span style={{ color: systemStatus === "critical" ? T.red : systemStatus === "warning" ? T.orange : T.green, fontSize: 11, fontFamily: "'JetBrains Mono',monospace", fontWeight: 700 }}>
+          <div
+            style={{
+              padding: "4px 12px",
+              borderRadius: 4,
+              background:
+                systemStatus === "critical"
+                  ? T.redDim
+                  : systemStatus === "warning"
+                    ? T.orangeDim
+                    : T.greenDim,
+              border: `1px solid ${systemStatus === "critical" ? T.red : systemStatus === "warning" ? T.orange : T.green}44`,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <span
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                background:
+                  systemStatus === "critical"
+                    ? T.red
+                    : systemStatus === "warning"
+                      ? T.orange
+                      : T.green,
+                display: "inline-block",
+                animation:
+                  systemStatus !== "healthy" ? "pulse 1.2s infinite" : "none",
+              }}
+            />
+            <span
+              style={{
+                color:
+                  systemStatus === "critical"
+                    ? T.red
+                    : systemStatus === "warning"
+                      ? T.orange
+                      : T.green,
+                fontSize: 11,
+                fontFamily: "'JetBrains Mono',monospace",
+                fontWeight: 700,
+              }}
+            >
               SYSTEM {systemStatus.toUpperCase()}
             </span>
           </div>
@@ -929,11 +1115,37 @@ export default function CCDTApp() {
             { label: "GUARDIAN", value: "5 POLICIES ACTIVE", color: T.purple },
           ].map((s, i) => (
             <div key={i} style={{ textAlign: "right" }}>
-              <div style={{ color: T.textDim, fontSize: 9, fontFamily: "'JetBrains Mono',monospace", letterSpacing: 0.5 }}>{s.label}</div>
-              <div style={{ color: s.color, fontSize: 11, fontFamily: "'JetBrains Mono',monospace", fontWeight: 600 }}>{s.value}</div>
+              <div
+                style={{
+                  color: T.textDim,
+                  fontSize: 9,
+                  fontFamily: "'JetBrains Mono',monospace",
+                  letterSpacing: 0.5,
+                }}
+              >
+                {s.label}
+              </div>
+              <div
+                style={{
+                  color: s.color,
+                  fontSize: 11,
+                  fontFamily: "'JetBrains Mono',monospace",
+                  fontWeight: 600,
+                }}
+              >
+                {s.value}
+              </div>
             </div>
           ))}
-          <div style={{ color: T.textDim, fontFamily: "'JetBrains Mono',monospace", fontSize: 12, borderLeft: `1px solid ${T.border}`, paddingLeft: 16 }}>
+          <div
+            style={{
+              color: T.textDim,
+              fontFamily: "'JetBrains Mono',monospace",
+              fontSize: 12,
+              borderLeft: `1px solid ${T.border}`,
+              paddingLeft: 16,
+            }}
+          >
             {clock.toLocaleTimeString("en-US", { hour12: false })}
           </div>
         </div>
@@ -941,43 +1153,109 @@ export default function CCDTApp() {
 
       <div style={{ display: "flex", height: "calc(100vh - 60px)" }}>
         {/* Left Sidebar */}
-        <div style={{
-          width: 200, background: T.bg1, borderRight: `1px solid ${T.border}`,
-          display: "flex", flexDirection: "column", padding: "16px 12px", flexShrink: 0,
-        }}>
+        <div
+          style={{
+            width: 200,
+            background: T.bg1,
+            borderRight: `1px solid ${T.border}`,
+            display: "flex",
+            flexDirection: "column",
+            padding: "16px 12px",
+            flexShrink: 0,
+          }}
+        >
           {/* Navigation */}
           <div style={{ marginBottom: 20 }}>
             {nav.map((item) => (
-              <button key={item.id} onClick={() => setActiveTab(item.id)} style={{
-                width: "100%", padding: "10px 14px", background: activeTab === item.id ? `${T.cyan}18` : "transparent",
-                border: `1px solid ${activeTab === item.id ? T.cyanDim : "transparent"}`,
-                borderRadius: 6, color: activeTab === item.id ? T.cyan : T.textDim,
-                fontFamily: "'JetBrains Mono',monospace", fontSize: 12, cursor: "pointer",
-                display: "flex", alignItems: "center", gap: 10, marginBottom: 4,
-                textAlign: "left", transition: "all 0.15s",
-              }}>
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  background:
+                    activeTab === item.id ? `${T.cyan}18` : "transparent",
+                  border: `1px solid ${activeTab === item.id ? T.cyanDim : "transparent"}`,
+                  borderRadius: 6,
+                  color: activeTab === item.id ? T.cyan : T.textDim,
+                  fontFamily: "'JetBrains Mono',monospace",
+                  fontSize: 12,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  marginBottom: 4,
+                  textAlign: "left",
+                  transition: "all 0.15s",
+                }}
+              >
                 <span>{item.icon}</span> {item.label}
               </button>
             ))}
           </div>
 
-          <div style={{ color: T.textDim, fontSize: 10, fontFamily: "'JetBrains Mono',monospace", letterSpacing: 1, marginBottom: 8, padding: "0 4px" }}>
+          <div
+            style={{
+              color: T.textDim,
+              fontSize: 10,
+              fontFamily: "'JetBrains Mono',monospace",
+              letterSpacing: 1,
+              marginBottom: 8,
+              padding: "0 4px",
+            }}
+          >
             LIVE ALERTS
           </div>
           <div style={{ flex: 1, overflowY: "auto" }}>
             {ALERTS.map((a) => (
-              <div key={a.id} style={{
-                padding: "8px 10px", background: T.bg2, borderRadius: 5,
-                border: `1px solid ${a.sev === "critical" ? T.redDim : T.border}`,
-                marginBottom: 6,
-              }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: sevColor(a.sev), display: "inline-block", marginTop: 3, flexShrink: 0 }} />
-                  <span style={{ color: T.textDim, fontSize: 9, fontFamily: "'JetBrains Mono',monospace" }}>{a.time}</span>
+              <div
+                key={a.id}
+                style={{
+                  padding: "8px 10px",
+                  background: T.bg2,
+                  borderRadius: 5,
+                  border: `1px solid ${a.sev === "critical" ? T.redDim : T.border}`,
+                  marginBottom: 6,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    marginBottom: 4,
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: "50%",
+                      background: sevColor(a.sev),
+                      display: "inline-block",
+                      marginTop: 3,
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span
+                    style={{
+                      color: T.textDim,
+                      fontSize: 9,
+                      fontFamily: "'JetBrains Mono',monospace",
+                    }}
+                  >
+                    {a.time}
+                  </span>
                 </div>
-                <div style={{ color: T.textBright, fontSize: 10, lineHeight: 1.4 }}>{a.msg}</div>
+                <div
+                  style={{ color: T.textBright, fontSize: 10, lineHeight: 1.4 }}
+                >
+                  {a.msg}
+                </div>
                 <div style={{ marginTop: 4 }}>
-                  <GlowBadge label={a.type} color={a.type === "attack" ? T.red : T.orange} />
+                  <GlowBadge
+                    label={a.type}
+                    color={a.type === "attack" ? T.red : T.orange}
+                  />
                 </div>
               </div>
             ))}
@@ -986,82 +1264,301 @@ export default function CCDTApp() {
 
         {/* Main Content */}
         <div style={{ flex: 1, overflow: "auto", padding: 20 }}>
-
           {/* TOPOLOGY TAB */}
           {activeTab === "topology" && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 240px", gap: 16, height: "100%" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 240px",
+                gap: 16,
+                height: "100%",
+              }}
+            >
+              <div
+                style={{ display: "flex", flexDirection: "column", gap: 16 }}
+              >
                 {/* Topology map */}
-                <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
-                  <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div
+                  style={{
+                    background: T.bg1,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 10,
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      padding: "12px 16px",
+                      borderBottom: `1px solid ${T.border}`,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                    }}
+                  >
                     <div>
-                      <div style={{ color: T.textBright, fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 700 }}>REAL-TIME TOPOLOGY MAP</div>
-                      <div style={{ color: T.textDim, fontSize: 11, marginTop: 2 }}>Directed Acyclic Graph — Causal chains highlighted</div>
+                      <div
+                        style={{
+                          color: T.textBright,
+                          fontFamily: "'JetBrains Mono',monospace",
+                          fontSize: 13,
+                          fontWeight: 700,
+                        }}
+                      >
+                        REAL-TIME TOPOLOGY MAP
+                      </div>
+                      <div
+                        style={{ color: T.textDim, fontSize: 11, marginTop: 2 }}
+                      >
+                        Directed Acyclic Graph — Causal chains highlighted
+                      </div>
                     </div>
                     <div style={{ display: "flex", gap: 8 }}>
                       <GlowBadge label="LIVE" color={T.green} />
-                      <GlowBadge label={`${nodes.length} NODES`} color={T.cyan} />
+                      <GlowBadge
+                        label={`${nodes.length} NODES`}
+                        color={T.cyan}
+                      />
                     </div>
                   </div>
-                  <TopologyMap nodes={nodes} selectedNode={selectedNode} onSelect={setSelectedNode} ghostTarget={null} />
+                  <TopologyMap
+                    nodes={nodes}
+                    selectedNode={selectedNode}
+                    onSelect={setSelectedNode}
+                    ghostTarget={null}
+                  />
                 </div>
 
                 {/* Layer health */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(4, 1fr)",
+                    gap: 10,
+                  }}
+                >
                   {[
-                    { layer: "Layer 1", name: "Nervous System", sub: "eBPF Sensors", icon: "⚡", color: T.green, status: "ONLINE", metrics: "847K events/s" },
-                    { layer: "Layer 2", name: "Cognitive Core", sub: "Causal GNN", icon: "🧠", color: T.cyan, status: "ACTIVE", metrics: "Inference: 4.2ms" },
-                    { layer: "Layer 3", name: "Guardian", sub: "OPA + RL", icon: "🛡", color: T.purple, status: "ENFORCING", metrics: "5 policies active" },
-                    { layer: "Layer 4", name: "Co-Pilot", sub: "LLM Interface", icon: "💬", color: T.orange, status: "READY", metrics: "claude-sonnet" },
+                    {
+                      layer: "Layer 1",
+                      name: "Nervous System",
+                      sub: "eBPF Sensors",
+                      icon: <Zap size={16} />,
+                      color: T.green,
+                      status: "ONLINE",
+                      metrics: "847K events/s",
+                    },
+                    {
+                      layer: "Layer 2",
+                      name: "Cognitive Core",
+                      sub: "Causal GNN",
+                      icon: <Brain size={16} />,
+                      color: T.cyan,
+                      status: "ACTIVE",
+                      metrics: "Inference: 4.2ms",
+                    },
+                    {
+                      layer: "Layer 3",
+                      name: "Guardian",
+                      sub: "OPA + RL",
+                      icon: <Shield size={16} />,
+                      color: T.purple,
+                      status: "ENFORCING",
+                      metrics: "5 policies active",
+                    },
+                    {
+                      layer: "Layer 4",
+                      name: "Co-Pilot",
+                      sub: "LLM Interface",
+                      icon: <MessageSquare size={16} />,
+                      color: T.orange,
+                      status: "READY",
+                      metrics: "claude-sonnet",
+                    },
                   ].map((l, i) => (
-                    <div key={i} style={{
-                      padding: "14px", background: T.bg1, borderRadius: 8,
-                      border: `1px solid ${l.color}33`,
-                      boxShadow: `inset 0 0 20px ${l.color}08`,
-                    }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                    <div
+                      key={i}
+                      style={{
+                        padding: "14px",
+                        background: T.bg1,
+                        borderRadius: 8,
+                        border: `1px solid ${l.color}33`,
+                        boxShadow: `inset 0 0 20px ${l.color}08`,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "flex-start",
+                          marginBottom: 8,
+                        }}
+                      >
                         <span style={{ fontSize: 20 }}>{l.icon}</span>
                         <GlowBadge label={l.status} color={l.color} />
                       </div>
-                      <div style={{ color: T.textDim, fontSize: 9, fontFamily: "'JetBrains Mono',monospace", letterSpacing: 0.5 }}>{l.layer}</div>
-                      <div style={{ color: T.textBright, fontSize: 13, fontWeight: 600, margin: "2px 0" }}>{l.name}</div>
-                      <div style={{ color: T.textDim, fontSize: 10 }}>{l.sub}</div>
-                      <div style={{ color: l.color, fontSize: 10, fontFamily: "'JetBrains Mono',monospace", marginTop: 6 }}>{l.metrics}</div>
+                      <div
+                        style={{
+                          color: T.textDim,
+                          fontSize: 9,
+                          fontFamily: "'JetBrains Mono',monospace",
+                          letterSpacing: 0.5,
+                        }}
+                      >
+                        {l.layer}
+                      </div>
+                      <div
+                        style={{
+                          color: T.textBright,
+                          fontSize: 13,
+                          fontWeight: 600,
+                          margin: "2px 0",
+                        }}
+                      >
+                        {l.name}
+                      </div>
+                      <div style={{ color: T.textDim, fontSize: 10 }}>
+                        {l.sub}
+                      </div>
+                      <div
+                        style={{
+                          color: l.color,
+                          fontSize: 10,
+                          fontFamily: "'JetBrains Mono',monospace",
+                          marginTop: 6,
+                        }}
+                      >
+                        {l.metrics}
+                      </div>
                     </div>
                   ))}
                 </div>
               </div>
 
               {/* Node detail panel */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: 10, padding: 16, flex: 1, overflowY: "auto" }}>
-                  <div style={{ color: T.textDim, fontSize: 11, fontFamily: "'JetBrains Mono',monospace", letterSpacing: 1, marginBottom: 12 }}>SERVICE NODES</div>
-                  {nodes.map(n => (
-                    <NodeCard key={n.id} node={n} selected={selectedNode} onClick={setSelectedNode} />
+              <div
+                style={{ display: "flex", flexDirection: "column", gap: 12 }}
+              >
+                <div
+                  style={{
+                    background: T.bg1,
+                    border: `1px solid ${T.border}`,
+                    borderRadius: 10,
+                    padding: 16,
+                    flex: 1,
+                    overflowY: "auto",
+                  }}
+                >
+                  <div
+                    style={{
+                      color: T.textDim,
+                      fontSize: 11,
+                      fontFamily: "'JetBrains Mono',monospace",
+                      letterSpacing: 1,
+                      marginBottom: 12,
+                    }}
+                  >
+                    SERVICE NODES
+                  </div>
+                  {nodes.map((n) => (
+                    <NodeCard
+                      key={n.id}
+                      node={n}
+                      selected={selectedNode}
+                      onClick={setSelectedNode}
+                    />
                   ))}
                 </div>
 
                 {selectedNode && (
-                  <div style={{ background: T.bg1, border: `1px solid ${T.cyanDim}`, borderRadius: 10, padding: 16, animation: "fadeIn 0.3s ease" }}>
-                    <div style={{ color: T.cyan, fontFamily: "'JetBrains Mono',monospace", fontSize: 12, fontWeight: 700, marginBottom: 10 }}>{selectedNode.label}</div>
+                  <div
+                    style={{
+                      background: T.bg1,
+                      border: `1px solid ${T.cyanDim}`,
+                      borderRadius: 10,
+                      padding: 16,
+                      animation: "fadeIn 0.3s ease",
+                    }}
+                  >
+                    <div
+                      style={{
+                        color: T.cyan,
+                        fontFamily: "'JetBrains Mono',monospace",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        marginBottom: 10,
+                      }}
+                    >
+                      {selectedNode.label}
+                    </div>
                     {[
-                      { label: "CPU Usage", value: `${selectedNode.cpu.toFixed(1)}%`, color: selectedNode.cpu > 85 ? T.red : T.cyan },
-                      { label: "Memory", value: `${selectedNode.mem.toFixed(1)}%`, color: selectedNode.mem > 85 ? T.red : T.cyan },
-                      { label: "Status", value: selectedNode.status, color: statusColor(selectedNode.status) },
-                      { label: "Layer", value: selectedNode.layer, color: layerColor(selectedNode.layer) },
+                      {
+                        label: "CPU Usage",
+                        value: `${selectedNode.cpu.toFixed(1)}%`,
+                        color: selectedNode.cpu > 85 ? T.red : T.cyan,
+                      },
+                      {
+                        label: "Memory",
+                        value: `${selectedNode.mem.toFixed(1)}%`,
+                        color: selectedNode.mem > 85 ? T.red : T.cyan,
+                      },
+                      {
+                        label: "Status",
+                        value: selectedNode.status,
+                        color: statusColor(selectedNode.status),
+                      },
+                      {
+                        label: "Layer",
+                        value: selectedNode.layer,
+                        color: layerColor(selectedNode.layer),
+                      },
                     ].map((d, i) => (
-                      <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${T.border}` }}>
-                        <span style={{ color: T.textDim, fontSize: 11 }}>{d.label}</span>
-                        <span style={{ color: d.color, fontSize: 11, fontFamily: "'JetBrains Mono',monospace", fontWeight: 600 }}>{d.value}</span>
+                      <div
+                        key={i}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          padding: "6px 0",
+                          borderBottom: `1px solid ${T.border}`,
+                        }}
+                      >
+                        <span style={{ color: T.textDim, fontSize: 11 }}>
+                          {d.label}
+                        </span>
+                        <span
+                          style={{
+                            color: d.color,
+                            fontSize: 11,
+                            fontFamily: "'JetBrains Mono',monospace",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {d.value}
+                        </span>
                       </div>
                     ))}
                     {selectedNode.status !== "healthy" && (
-                      <button onClick={() => setGhostModal({ label: `Remediate ${selectedNode.label}`, icon: "🔧" })} style={{
-                        width: "100%", marginTop: 12, padding: "10px",
-                        background: `${T.purple}22`, border: `1px solid ${T.purple}`,
-                        borderRadius: 6, color: T.purple, fontFamily: "'JetBrains Mono',monospace",
-                        fontSize: 11, cursor: "pointer", fontWeight: 600,
-                      }}>👻 Ghost Preview Remediation</button>
+                      <button
+                        onClick={() =>
+                          setGhostModal({
+                            label: `Remediate ${selectedNode.label}`,
+                            icon: <Wrench size={16} />,
+                          })
+                        }
+                        style={{
+                          width: "100%",
+                          marginTop: 12,
+                          padding: "10px",
+                          background: `${T.purple}22`,
+                          border: `1px solid ${T.purple}`,
+                          borderRadius: 6,
+                          color: T.purple,
+                          fontFamily: "'JetBrains Mono',monospace",
+                          fontSize: 11,
+                          cursor: "pointer",
+                          fontWeight: 600,
+                        }}
+                      >
+                        👻 Ghost Preview Remediation
+                      </button>
                     )}
                   </div>
                 )}
@@ -1076,15 +1573,42 @@ export default function CCDTApp() {
           )}
 
           {activeTab === "copilot" && (
-            <div style={{
-              background: T.bg1, border: `1px solid ${T.border}`,
-              borderRadius: 10, padding: 20, height: "calc(100vh - 160px)",
-              display: "flex", flexDirection: "column",
-            }}>
-              <div style={{ marginBottom: 16, paddingBottom: 14, borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div
+              style={{
+                background: T.bg1,
+                border: `1px solid ${T.border}`,
+                borderRadius: 10,
+                padding: 20,
+                height: "calc(100vh - 160px)",
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              <div
+                style={{
+                  marginBottom: 16,
+                  paddingBottom: 14,
+                  borderBottom: `1px solid ${T.border}`,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
                 <div>
-                  <div style={{ color: T.textBright, fontFamily: "'JetBrains Mono',monospace", fontSize: 14, fontWeight: 700 }}>CCDT CO-PILOT</div>
-                  <div style={{ color: T.textDim, fontSize: 11, marginTop: 2 }}>AI operator powered by Claude · Causal reasoning · Ghost Preview integration</div>
+                  <div
+                    style={{
+                      color: T.textBright,
+                      fontFamily: "'JetBrains Mono',monospace",
+                      fontSize: 14,
+                      fontWeight: 700,
+                    }}
+                  >
+                    CCDT CO-PILOT
+                  </div>
+                  <div style={{ color: T.textDim, fontSize: 11, marginTop: 2 }}>
+                    AI operator powered by Claude · Causal reasoning · Ghost
+                    Preview integration
+                  </div>
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
                   <GlowBadge label="CAUSAL GNN CONNECTED" color={T.cyan} />

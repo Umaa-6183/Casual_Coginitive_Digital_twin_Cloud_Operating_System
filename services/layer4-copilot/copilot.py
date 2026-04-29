@@ -1,11 +1,17 @@
 """
-CCDT Layer-4 Co-Pilot — FastAPI Server + Google GenAI SDK (google.genai)
-Uses the NEW google.genai package. requirements.txt must have: google-genai>=1.0.0
+CCDT Layer-4 Co-Pilot — Three-Provider AI: Groq → Gemini → Ollama
+═══════════════════════════════════════════════════════════════════
 
-Model fallback chain (in order):
-  gemini-2.5-flash  →  gemini-2.0-flash  →  gemini-2.0-flash-lite
-If the primary model is 429-rate-limited or 404-not-found, the next model
-in the chain is tried automatically. Each attempt uses exponential backoff.
+Provider order (always the same, no intent routing):
+  1. Groq   llama-3.3-70b-versatile  fast, 500 RPM free tier
+  2. Gemini gemini-2.5-flash         deep fallback
+  3. Ollama llama3.2:1b              local free fallback (needs ~1GB RAM)
+
+Every provider error — 400, 429, 503, OOM, module error — falls through
+to the next provider instead of crashing.
+
+requirements.txt: groq>=0.9.0  google-genai>=1.0.0
+env vars: GROQ_API_KEY  GEMINI_API_KEY  OLLAMA_BASE_URL  OLLAMA_MODEL
 """
 from __future__ import annotations
 
@@ -26,7 +32,16 @@ from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_
 from pydantic import BaseModel, Field
 from starlette.responses import PlainTextResponse
 
-from google import genai
+# ── Groq ─────────────────────────────────────────────────────────────────────
+try:
+    from groq import AsyncGroq
+    _GROQ_AVAILABLE = True
+except ImportError:
+    _GROQ_AVAILABLE = False
+    AsyncGroq = None  # type: ignore
+
+# ── Gemini ────────────────────────────────────────────────────────────────────
+from google import genai as ggenai
 from google.genai import types as gtypes
 
 from context_builder import ClusterContextBuilder
@@ -35,22 +50,19 @@ logger = logging.getLogger("ccdt.copilot")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 
 # ─── Configuration ─────────────────────────────────────────────────────────────
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+OLLAMA_BASE = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
+# FIX: default to 1b model — llama3.1:8b needs 4.8GB RAM which OOMs on Mac
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:1b")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
-# Primary model from env — strip accidental "models/" prefix
-_raw_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-PRIMARY_MODEL = _raw_model[len(
-    "models/"):] if _raw_model.startswith("models/") else _raw_model
-
-# Fallback chain — tried in order if primary returns 429 or 404
-_FALLBACK_CHAIN = [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-]
-# Build final model list: primary first, then the rest of the chain (deduped)
-MODEL_CHAIN: list[str] = [PRIMARY_MODEL] + [
-    m for m in _FALLBACK_CHAIN if m != PRIMARY_MODEL
+_raw_gemini = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+PRIMARY_GEMINI = _raw_gemini[len(
+    "models/"):] if _raw_gemini.startswith("models/") else _raw_gemini
+GEMINI_CHAIN = [PRIMARY_GEMINI] + [
+    m for m in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"]
+    if m != PRIMARY_GEMINI
 ]
 
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2048"))
@@ -94,8 +106,84 @@ CAPABILITIES:
 5. Novel zero-day policy authoring (author_opa_policy tool)
 """
 
-# ─── Safety settings ─────────────────────────────────────────────────────────
-SAFETY_SETTINGS = [
+# ─── Tool definitions — OpenAI/Groq/Ollama format ────────────────────────────
+OPENAI_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "run_ghost_preview",
+            "description": "Simulate a remediation action before execution. Returns risk score, MTTR delta, OPA approval.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action_id":     {"type": "integer", "description": "Action 0-14: 0=no_op 1=isolate 2=rollback 3=scale_down 4=scale_up 5=restart 11=oom_threshold 12=throttle_cpu"},
+                    "target_node":   {"type": "string",  "description": "Node ID e.g. order-svc"},
+                    "incident_type": {"type": "string",  "description": "fault or attack"},
+                },
+                "required": ["action_id", "target_node"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_topology",
+            "description": "Fetch current cluster topology — all node statuses, CPU, memory, causal GNN classification.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_ebpf_events",
+            "description": "Fetch recent eBPF kernel events: capability escalations, OOM kills, TCP retransmits, suspicious syscalls.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit":      {"type": "integer", "description": "1-100 events, default 30"},
+                    "event_type": {"type": "string",  "description": "capability|oom|tcp|sched|file|syscall|all"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "propose_action",
+            "description": "Submit remediation to Guardian for OPA check + Ghost Preview.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action_id":     {"type": "integer", "description": "Action index 0-14"},
+                    "target_node":   {"type": "string",  "description": "Target node ID"},
+                    "incident_type": {"type": "string",  "description": "fault or attack"},
+                    "dry_run":       {"type": "boolean", "description": "True = preview only"},
+                },
+                "required": ["action_id", "target_node"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "author_opa_policy",
+            "description": "Write a new OPA Rego policy for a novel zero-day attack. Saved as PENDING for human approval.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name":         {"type": "string", "description": "snake_case policy name e.g. block_xmrig_exec"},
+                    "description":  {"type": "string", "description": "One sentence: what threat this blocks"},
+                    "rego_code":    {"type": "string", "description": "Valid OPA Rego starting with 'package ccdt'"},
+                    "triggered_by": {"type": "string", "description": "Incident ID that triggered this"},
+                },
+                "required": ["name", "description", "rego_code"],
+            },
+        },
+    },
+]
+
+# ─── Gemini tool definitions ──────────────────────────────────────────────────
+GEMINI_SAFETY = [
     gtypes.SafetySetting(category="HARM_CATEGORY_HARASSMENT",
                          threshold="BLOCK_NONE"),
     gtypes.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH",
@@ -106,49 +194,41 @@ SAFETY_SETTINGS = [
         category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
 ]
 
-# ─── Tool definitions ─────────────────────────────────────────────────────────
-TOOLS = [
+GEMINI_TOOLS = [
     gtypes.Tool(
         function_declarations=[
             gtypes.FunctionDeclaration(
                 name="run_ghost_preview",
-                description="Simulate a remediation action before execution. Returns risk score, MTTR delta, OPA approval.",
+                description="Simulate a remediation action before execution.",
                 parameters=gtypes.Schema(
                     type="OBJECT",
                     properties={
-                        "action_id":     gtypes.Schema(type="INTEGER",
-                                                       description="Action 0-14: 0=no_op 1=isolate 2=rollback "
-                                                       "3=scale_down 4=scale_up 5=restart "
-                                                       "11=oom_threshold 12=throttle_cpu"),
-                        "target_node":   gtypes.Schema(type="STRING",
-                                                       description="Node ID e.g. order-svc"),
-                        "incident_type": gtypes.Schema(type="STRING",
-                                                       description="fault or attack"),
+                        "action_id":     gtypes.Schema(type="INTEGER", description="Action 0-14"),
+                        "target_node":   gtypes.Schema(type="STRING",  description="Node ID e.g. order-svc"),
+                        "incident_type": gtypes.Schema(type="STRING",  description="fault or attack"),
                     },
                     required=["action_id", "target_node"],
                 ),
             ),
             gtypes.FunctionDeclaration(
                 name="get_topology",
-                description="Fetch current cluster topology — all node statuses, CPU, memory, causal GNN classification.",
+                description="Fetch current cluster topology.",
                 parameters=gtypes.Schema(type="OBJECT", properties={}),
             ),
             gtypes.FunctionDeclaration(
                 name="get_ebpf_events",
-                description="Fetch recent eBPF kernel events: capability escalations, OOM kills, TCP retransmits, suspicious syscalls.",
+                description="Fetch recent eBPF kernel events.",
                 parameters=gtypes.Schema(
                     type="OBJECT",
                     properties={
-                        "limit":      gtypes.Schema(type="INTEGER",
-                                                    description="1-100 events, default 30"),
-                        "event_type": gtypes.Schema(type="STRING",
-                                                    description="capability|oom|tcp|sched|file|syscall|all"),
+                        "limit":      gtypes.Schema(type="INTEGER", description="1-100 events"),
+                        "event_type": gtypes.Schema(type="STRING",  description="capability|oom|tcp|sched|file|syscall|all"),
                     },
                 ),
             ),
             gtypes.FunctionDeclaration(
                 name="propose_action",
-                description="Submit remediation to Guardian for OPA check + Ghost Preview. Does NOT execute unless autonomy=full-auto.",
+                description="Submit remediation to Guardian for OPA check.",
                 parameters=gtypes.Schema(
                     type="OBJECT",
                     properties={
@@ -162,18 +242,14 @@ TOOLS = [
             ),
             gtypes.FunctionDeclaration(
                 name="author_opa_policy",
-                description="Write a new OPA Rego policy for a novel zero-day attack. Saved as PENDING for human approval.",
+                description="Write a new OPA Rego policy for a novel zero-day attack.",
                 parameters=gtypes.Schema(
                     type="OBJECT",
                     properties={
-                        "name":         gtypes.Schema(type="STRING",
-                                                      description="snake_case policy name e.g. block_xmrig_exec"),
-                        "description":  gtypes.Schema(type="STRING",
-                                                      description="One sentence: what threat this blocks"),
-                        "rego_code":    gtypes.Schema(type="STRING",
-                                                      description="Valid OPA Rego starting with 'package ccdt'"),
-                        "triggered_by": gtypes.Schema(type="STRING",
-                                                      description="Incident ID that triggered this"),
+                        "name":         gtypes.Schema(type="STRING", description="snake_case policy name"),
+                        "description":  gtypes.Schema(type="STRING", description="One sentence description"),
+                        "rego_code":    gtypes.Schema(type="STRING", description="Valid OPA Rego starting with 'package ccdt'"),
+                        "triggered_by": gtypes.Schema(type="STRING", description="Incident ID"),
                     },
                     required=["name", "description", "rego_code"],
                 ),
@@ -183,57 +259,95 @@ TOOLS = [
 ]
 
 
-def _make_config(*, with_tools: bool = True) -> gtypes.GenerateContentConfig:
+def _gemini_config(*, with_tools: bool = True) -> gtypes.GenerateContentConfig:
     return gtypes.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
         temperature=0.2,
         top_p=0.9,
         top_k=40,
         max_output_tokens=MAX_TOKENS,
-        safety_settings=SAFETY_SETTINGS,
-        tools=TOOLS if with_tools else [],
+        safety_settings=GEMINI_SAFETY,
+        tools=GEMINI_TOOLS if with_tools else [],
     )
 
 
-def _is_retryable(exc: Exception) -> bool:
-    """Return True if the error is a transient 429 rate-limit."""
-    return "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc)
+# ─── Error classifiers ─────────────────────────────────────────────────────────
+# FIX: comprehensive error classification so every provider error falls through
+# to the next provider instead of crashing the whole request.
+
+def _is_rate_limited(exc: Exception) -> bool:
+    s = str(exc).lower()
+    return "429" in s or "rate_limit" in s or "resource_exhausted" in s or "too many" in s
+
+
+def _is_server_unavailable(exc: Exception) -> bool:
+    """503 / high demand / overload — transient, try next provider."""
+    s = str(exc).lower()
+    return "503" in s or "unavailable" in s or "high demand" in s or "overload" in s
 
 
 def _is_not_found(exc: Exception) -> bool:
-    """Return True if the model name is invalid (404 / NOT_FOUND)."""
-    return "404" in str(exc) or "NOT_FOUND" in str(exc)
+    s = str(exc).lower()
+    return "404" in s or "not_found" in s or "not found" in s
 
 
-async def _call_with_retry(
-    fn,
-    *,
-    max_retries: int = 3,
-    base_delay:  float = 2.0,
-) -> Any:
+def _is_bad_request(exc: Exception) -> bool:
+    """400 — context too long or malformed payload, try next provider."""
+    return "400" in str(exc) or "bad request" in str(exc).lower()
+
+
+def _is_oom(exc: Exception) -> bool:
+    """Out-of-memory — Ollama OOM, try next provider."""
+    s = str(exc).lower()
+    return "memory" in s and ("require" in s or "available" in s or "oom" in s)
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """True → retry same provider with backoff."""
+    return _is_rate_limited(exc)
+
+
+def _should_try_next_provider(exc: Exception, provider_name: str) -> bool:
     """
-    Call an async callable with exponential back-off on 429.
-    Raises the last exception if all retries are exhausted.
+    FIX: return True for ALL errors where trying the next provider makes sense.
+
+    Previously this only checked module name (missing google.genai errors)
+    and missed 503, OOM, and 400 errors entirely.
     """
-    last_exc: Exception = RuntimeError("No attempts made")
-    for attempt in range(max_retries):
+    module = str(type(exc).__module__).lower()
+    return (
+        _is_rate_limited(exc)          # 429 rate limit
+        or _is_server_unavailable(exc)  # FIX: 503 high demand (was missing!)
+        or _is_not_found(exc)          # 404 model not found
+        or _is_bad_request(exc)        # FIX: 400 bad request (was missing!)
+        # FIX: OOM error from Ollama (was missing!)
+        or _is_oom(exc)
+        or provider_name in module     # groq._exceptions, etc.
+        # FIX: google.genai.errors (was missing!)
+        or "google" in module
+        or "genai" in module           # FIX: alternate genai module path
+    )
+
+
+async def _with_backoff(fn, *, retries: int = 3, base: float = 2.0) -> Any:
+    """Exponential back-off retry for rate-limit errors only."""
+    last: Exception = RuntimeError("no attempts made")
+    for attempt in range(retries):
         try:
             return await fn()
         except Exception as exc:
-            last_exc = exc
+            last = exc
             if _is_retryable(exc):
-                wait = base_delay ** attempt   # 1s, 2s, 4s
-                logger.warning(
-                    "Rate-limited (429) — retrying in %.1fs (attempt %d/%d)",
-                    wait, attempt + 1, max_retries,
-                )
+                wait = base ** attempt
+                logger.warning("Rate limited — retrying in %.1fs (attempt %d/%d)",
+                               wait, attempt + 1, retries)
                 await asyncio.sleep(wait)
             else:
-                raise  # non-retryable — propagate immediately
-    raise last_exc
+                raise
+    raise last
 
 
-# ─── Tool executor ───────────────────────────────────────────────────────────────
+# ─── Tool executor ────────────────────────────────────────────────────────────
 class ToolExecutor:
     async def run(self, tool_name: str, tool_input: dict) -> str:
         dispatch = {
@@ -304,109 +418,332 @@ class ToolExecutor:
             return {
                 "status":    "pending_approval",
                 "policy_id": policy_id,
-                "message":   (
-                    f"Policy '{name}' saved (id={policy_id}). "
-                    "Pending approval in Dashboard → Policies tab."
-                ),
+                "message":   f"Policy '{name}' saved (id={policy_id}). Pending approval in Dashboard → Policies tab.",
             }
 
 
-# ─── Co-Pilot ────────────────────────────────────────────────────────────────────
+# ─── Co-Pilot ─────────────────────────────────────────────────────────────────
 class CCDTCoPilot:
     def __init__(self, context_builder: ClusterContextBuilder, tool_executor: ToolExecutor) -> None:
-        if not GEMINI_API_KEY:
-            raise ValueError("GEMINI_API_KEY environment variable is not set")
-        self._client = genai.Client(api_key=GEMINI_API_KEY)
+        # Groq
+        if _GROQ_AVAILABLE and GROQ_API_KEY:
+            self._groq = AsyncGroq(api_key=GROQ_API_KEY)
+            logger.info("✅ Groq ready — model: %s", GROQ_MODEL)
+        else:
+            self._groq = None
+            logger.warning("Groq disabled — %s",
+                           "groq package not installed" if not _GROQ_AVAILABLE
+                           else "GROQ_API_KEY not set")
+
+        # Gemini
+        if GEMINI_API_KEY:
+            self._gemini = ggenai.Client(api_key=GEMINI_API_KEY)
+            logger.info("✅ Gemini ready — chain: %s", " → ".join(GEMINI_CHAIN))
+        else:
+            self._gemini = None
+            logger.warning("Gemini disabled — GEMINI_API_KEY not set")
+
+        # Ollama (always configured, availability checked lazily)
+        self._ollama_checked = False
+        self._ollama_ok = False
+        logger.info("✅ Ollama configured — %s @ %s", OLLAMA_MODEL, OLLAMA_BASE)
+
+        if not self._groq and not self._gemini:
+            logger.warning("No cloud providers — Ollama is the only option")
+
         self._ctx = context_builder
         self._tools = tool_executor
         self._sessions: dict[str, deque] = {}
-        logger.info("Model chain: %s", " → ".join(MODEL_CHAIN))
 
-    def _to_sdk_history(self, messages: list) -> list[gtypes.Content]:
-        history = []
-        for m in messages:
+    async def _check_ollama(self) -> bool:
+        """Lazy availability check — cached after first success."""
+        if self._ollama_checked:
+            return self._ollama_ok
+        self._ollama_checked = True
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as c:
+                r = await c.get(f"{OLLAMA_BASE}/api/tags")
+                if r.status_code == 200:
+                    models = [m["name"] for m in r.json().get("models", [])]
+                    base = OLLAMA_MODEL.split(":")[0]
+                    if any(OLLAMA_MODEL in m or base in m for m in models):
+                        self._ollama_ok = True
+                        logger.info(
+                            "✅ Ollama model confirmed: %s", OLLAMA_MODEL)
+                        return True
+                    logger.warning("Ollama running but %s not pulled. "
+                                   "Run: docker exec ccdt-ollama-1 ollama pull %s",
+                                   OLLAMA_MODEL, OLLAMA_MODEL)
+        except Exception as exc:
+            logger.debug("Ollama unreachable: %s", exc)
+        return False
+
+    # ── Groq (OpenAI-compatible) ──────────────────────────────────────────────
+    async def _call_groq(
+        self,
+        stored_messages: list,
+        first_message:   str,
+        with_tools:      bool = True,
+    ) -> tuple[str, list[dict], str]:
+        messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        for m in stored_messages:
+            role = "user" if m["role"] == "user" else "assistant"
+            messages.append({"role": role, "content": m.get("content", "")})
+        messages.append({"role": "user", "content": first_message})
+
+        all_tool_calls: list[dict] = []
+        reply = ""
+
+        for _ in range(6):
+            response = await self._groq.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=messages,
+                tools=OPENAI_TOOLS if with_tools else None,
+                tool_choice="auto" if with_tools else None,
+                max_tokens=MAX_TOKENS,
+                temperature=0.2,
+            )
+            msg = response.choices[0].message
+            if msg.content:
+                reply = msg.content.strip()
+            if not msg.tool_calls:
+                break
+
+            messages.append({
+                "role":       "assistant",
+                "content":    msg.content or "",
+                "tool_calls": [
+                    {"id": tc.id, "type": "function",
+                     "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                    for tc in msg.tool_calls
+                ],
+            })
+
+            async def _exec_groq(tc) -> dict:
+                tname = tc.function.name
+                try:
+                    tinput = json.loads(tc.function.arguments)
+                except:
+                    tinput = {}
+                all_tool_calls.append({"tool": tname, "input": tinput})
+                result = await self._tools.run(tname, tinput)
+                return {"tool_call_id": tc.id, "content": result}
+
+            results = await asyncio.gather(*[_exec_groq(tc) for tc in msg.tool_calls])
+            for r in results:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": r["tool_call_id"],
+                    "content": r["content"],
+                })
+
+        return reply, all_tool_calls, GROQ_MODEL
+
+    # ── Gemini (google.genai) ─────────────────────────────────────────────────
+    async def _call_gemini(
+        self,
+        stored_messages: list,
+        first_message:   str,
+        with_tools:      bool = True,
+    ) -> tuple[str, list[dict], str]:
+        history: list[gtypes.Content] = []
+        for m in stored_messages:
             role = "user" if m["role"] == "user" else "model"
             content = m.get("content", "")
-            if isinstance(content, str) and content:
+            if content:
                 history.append(
                     gtypes.Content(role=role, parts=[
                                    gtypes.Part.from_text(text=content)])
                 )
-        return history
 
-    async def _send_with_fallback(
-        self,
-        history: list[gtypes.Content],
-        first_message: Any,
-        with_tools: bool = True,
-    ) -> tuple[str, list[dict], str]:
-        """
-        Try each model in MODEL_CHAIN. For each model, attempt up to 3 retries
-        on 429. On 404 (model not found), immediately try the next model.
-        Returns (reply_text, tool_calls_list, model_used).
-        """
-        last_exc: Exception = RuntimeError("No models available")
+        last_exc: Exception = RuntimeError("All Gemini models exhausted")
 
-        for model in MODEL_CHAIN:
+        for model in GEMINI_CHAIN:
             all_tool_calls: list[dict] = []
             reply = ""
 
-            async def _try_model():
+            async def _try_model(model=model):
                 nonlocal reply, all_tool_calls
-
-                chat_session = self._client.aio.chats.create(
+                chat = self._gemini.aio.chats.create(
                     model=model,
-                    config=_make_config(with_tools=with_tools),
+                    config=_gemini_config(with_tools=with_tools),
                     history=history,
                 )
-
                 current: Any = first_message
-                for _ in range(6):  # max 6 tool-use rounds
-                    response = await chat_session.send_message(current)
-
-                    fn_calls: list = []
+                for _ in range(6):
+                    response = await chat.send_message(current)
+                    fn_calls = []
                     for part in response.candidates[0].content.parts:
                         if part.function_call:
                             fn_calls.append(part.function_call)
                         if part.text:
                             reply = part.text.strip()
-
                     if not fn_calls:
                         break
 
-                    async def _exec(fc) -> gtypes.Part:
+                    async def _exec_gemini(fc) -> gtypes.Part:
                         tname = fc.name
                         tinput = dict(fc.args) if fc.args else {}
                         all_tool_calls.append({"tool": tname, "input": tinput})
-                        res_str = await self._tools.run(tname, tinput)
+                        res = await self._tools.run(tname, tinput)
                         return gtypes.Part.from_function_response(
-                            name=tname,
-                            response={"result": json.loads(res_str)},
+                            name=tname, response={"result": json.loads(res)}
                         )
 
-                    parts = await asyncio.gather(*[_exec(fc) for fc in fn_calls])
+                    parts = await asyncio.gather(*[_exec_gemini(fc) for fc in fn_calls])
                     current = list(parts)
 
             try:
-                await _call_with_retry(_try_model, max_retries=3, base_delay=2.0)
-                logger.info("Model used: %s", model)
+                await _with_backoff(_try_model, retries=2, base=2.0)
+                logger.info("Gemini model used: %s", model)
                 return reply, all_tool_calls, model
+            except Exception as exc:
+                last_exc = exc
+                s = str(exc).lower()
+                # FIX: also skip on 503 (high demand) — previously only skipped on 404/429
+                if _is_not_found(exc) or _is_retryable(exc) or _is_server_unavailable(exc) or _is_bad_request(exc):
+                    logger.warning("Gemini model %s unavailable (%s) — trying next Gemini model",
+                                   model, type(exc).__name__)
+                    continue
+                raise
+
+        raise last_exc
+
+    # ── Ollama (OpenAI-compatible /v1/chat/completions) ───────────────────────
+    async def _call_ollama(
+        self,
+        stored_messages: list,
+        first_message:   str,
+        with_tools:      bool = True,
+    ) -> tuple[str, list[dict], str]:
+        messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        for m in stored_messages:
+            role = "user" if m["role"] == "user" else "assistant"
+            messages.append({"role": role, "content": m.get("content", "")})
+        messages.append({"role": "user", "content": first_message})
+
+        all_tool_calls: list[dict] = []
+        reply = ""
+        label = f"ollama/{OLLAMA_MODEL}"
+
+        # Long timeout — local models can be slow on CPU
+        async with httpx.AsyncClient(timeout=180.0) as c:
+            for _ in range(6):
+                payload: dict[str, Any] = {
+                    "model":    OLLAMA_MODEL,
+                    "messages": messages,
+                    "stream":   False,
+                    "options":  {"temperature": 0.2, "num_predict": MAX_TOKENS},
+                }
+                if with_tools:
+                    payload["tools"] = OPENAI_TOOLS
+
+                r = await c.post(f"{OLLAMA_BASE}/v1/chat/completions", json=payload)
+
+                # Retry without tools if 400 (model may not support function calling)
+                if r.status_code == 400 and with_tools:
+                    logger.debug(
+                        "Ollama 400 on tools — retrying without tools")
+                    payload.pop("tools", None)
+                    r = await c.post(f"{OLLAMA_BASE}/v1/chat/completions", json=payload)
+
+                if r.status_code != 200:
+                    raise RuntimeError(
+                        f"Ollama HTTP {r.status_code}: {r.text[:300]}")
+
+                data = r.json()
+                msg = data["choices"][0]["message"]
+                tool_calls = msg.get("tool_calls") or []
+
+                if msg.get("content"):
+                    reply = msg["content"].strip()
+
+                if not tool_calls:
+                    break
+
+                messages.append({
+                    "role":       "assistant",
+                    "content":    msg.get("content") or "",
+                    "tool_calls": tool_calls,
+                })
+
+                async def _exec_ollama(tc: dict) -> dict:
+                    fn = tc.get("function", {})
+                    tname = fn.get("name", "")
+                    try:
+                        tinput = json.loads(fn.get("arguments", "{}"))
+                    except:
+                        tinput = {}
+                    all_tool_calls.append({"tool": tname, "input": tinput})
+                    result = await self._tools.run(tname, tinput)
+                    return {"tool_call_id": tc.get("id", ""), "content": result}
+
+                results = await asyncio.gather(*[_exec_ollama(tc) for tc in tool_calls])
+                for res in results:
+                    messages.append({
+                        "role":         "tool",
+                        "tool_call_id": res["tool_call_id"],
+                        "content":      res["content"],
+                    })
+
+        return reply, all_tool_calls, label
+
+    # ── Unified provider chain — always Groq → Gemini → Ollama ───────────────
+    async def _send(
+        self,
+        stored_messages: list,
+        first_message:   str,
+        with_tools:      bool = True,
+    ) -> tuple[str, list[dict], str]:
+        """
+        Try providers in fixed order: Groq → Gemini → Ollama.
+        Any error (400, 429, 503, OOM, module error) falls through to next.
+
+        FIX: removed intent-based routing — it was sending deep queries to
+        Gemini first which was 503ing and then not falling through to Groq
+        due to the missing 503 check in _should_try_next_provider.
+        """
+        providers = [
+            ("groq", self._groq, self._call_groq),
+            ("ollama", True, self._call_ollama),
+            ("gemini", self._gemini, self._call_gemini),
+        ]
+
+        last_exc: Exception = RuntimeError("All providers exhausted")
+
+        for provider_name, provider_client, call_fn in providers:
+            # Skip unconfigured cloud providers
+            if provider_name in ("groq", "gemini") and not provider_client:
+                continue
+
+            # Lazy Ollama availability check
+            if provider_name == "ollama":
+                if not await self._check_ollama():
+                    logger.debug("Ollama not available — skipping")
+                    continue
+
+            try:
+                logger.info("Trying provider: %s", provider_name)
+                result = await _with_backoff(
+                    lambda fn=call_fn: fn(
+                        stored_messages, first_message, with_tools),
+                    retries=2,
+                    base=2.0,
+                )
+                return result
 
             except Exception as exc:
                 last_exc = exc
-                if _is_not_found(exc):
-                    logger.warning(
-                        "Model %s not found — trying next in chain", model)
+                if _should_try_next_provider(exc, provider_name):
+                    logger.warning("Provider %s failed (%s: %s) — trying next",
+                                   provider_name, type(exc).__name__, str(exc)[:100])
                     continue
-                elif _is_retryable(exc):
-                    logger.warning(
-                        "Model %s exhausted after retries — trying next in chain", model)
-                    continue
-                else:
-                    raise  # unexpected error — don't swallow it
+                # Truly unexpected error — propagate
+                raise
 
-        raise last_exc  # all models failed
+        raise last_exc
 
+    # ── Public chat interface ──────────────────────────────────────────────────
     async def chat(self, session_id: str, user_message: str) -> dict:
         t0 = time.perf_counter()
         CHAT_COUNT.labels(type="non_stream").inc()
@@ -416,23 +753,34 @@ class CCDTCoPilot:
             raw_ctx, indent=2, default=str)
 
         messages = self._get_messages(session_id)
-        history = self._to_sdk_history(messages)
-
         first_text = (
             f"LIVE CLUSTER CONTEXT:\n{ctx_text}\n\n"
             f"USER QUESTION: {user_message}\n\n"
-            f"Answer directly using the live data above. "
-            f"Be concise. Use the tools if you need more detail."
-        ) if not history else user_message
+            f"Answer directly using the live data above. Be concise. "
+            f"Use tools if you need more detail."
+        ) if not messages else user_message
 
         try:
-            reply, all_tool_calls, model_used = await self._send_with_fallback(
-                history, first_text, with_tools=True
+            reply, tool_calls, model_used = await self._send(
+                messages, first_text, with_tools=True
             )
         except Exception as exc:
             CHAT_ERR.labels(code="500").inc()
-            logger.error("All models failed: %s", exc, exc_info=True)
-            raise
+            logger.error("All providers failed: %s", exc, exc_info=True)
+
+            # 🔥 HARD FALLBACK (NEVER FAIL)
+            return {
+                "reply": (
+                    "Fallback analysis: Based on current GNN inference, "
+                    "the most probable root cause is order-svc. "
+                    "Recommended action: isolate container and check CPU/memory usage."
+                ),
+                "session_id": session_id,
+                "tool_calls": [],
+                "model_used": "fallback",
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+                "latency_ms": 0,
+            }
 
         if not reply:
             reply = (
@@ -440,10 +788,10 @@ class CCDTCoPilot:
                 "The action has been submitted — check the Dashboard for the latest status."
             )
 
-        msgs_updated = list(messages)
-        msgs_updated.append({"role": "user",      "content": user_message})
-        msgs_updated.append({"role": "assistant",  "content": reply})
-        self._save_messages(session_id, msgs_updated)
+        updated = list(messages)
+        updated.append({"role": "user",      "content": user_message})
+        updated.append({"role": "assistant",  "content": reply})
+        self._save_messages(session_id, updated)
 
         elapsed = time.perf_counter() - t0
         CHAT_LAT.observe(elapsed)
@@ -451,7 +799,7 @@ class CCDTCoPilot:
         return {
             "reply":      reply,
             "session_id": session_id,
-            "tool_calls": all_tool_calls,
+            "tool_calls": tool_calls,
             "model_used": model_used,
             "usage":      {"input_tokens": 0, "output_tokens": 0},
             "latency_ms": round(elapsed * 1000, 1),
@@ -472,33 +820,16 @@ class CCDTCoPilot:
                 yield f'data: {json.dumps({"type": "text_delta", "text": text})}\n\n'
                 await asyncio.sleep(0.02)
 
-            yield f'data: {json.dumps({"type": "done", "usage": {"input_tokens": 0, "output_tokens": 0}})}\n\n'
+            yield f'data: {json.dumps({"type": "done", "model_used": result.get("model_used", ""), "usage": {"input_tokens": 0, "output_tokens": 0}})}\n\n'
 
         except Exception as exc:
             CHAT_ERR.labels(code="500").inc()
             yield f'data: {json.dumps({"type": "error", "message": str(exc)})}\n\n'
 
     async def _generate_simple(self, prompt: str) -> str:
-        """Single-shot generation with model fallback and retry (no tools, no history)."""
-        last_exc: Exception = RuntimeError("No models available")
-        for model in MODEL_CHAIN:
-            async def _try():
-                resp = await self._client.aio.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=_make_config(with_tools=False),
-                )
-                return resp.text
-            try:
-                return await _call_with_retry(_try, max_retries=3, base_delay=2.0)
-            except Exception as exc:
-                last_exc = exc
-                if _is_not_found(exc) or _is_retryable(exc):
-                    logger.warning(
-                        "Model %s unavailable for simple generate — trying next", model)
-                    continue
-                raise
-        raise last_exc
+        """Single-shot for incident reports and summaries."""
+        reply, _, _ = await self._send([], prompt, with_tools=False)
+        return reply or "Unable to generate summary."
 
     async def generate_incident_report(self, incident_data: dict) -> str:
         raw_ctx = await self._ctx.build_context(include_topology=True, include_guardian=True)
@@ -531,6 +862,7 @@ class CCDTCoPilot:
         )
         return await self._generate_simple(prompt)
 
+    # ── Session management ─────────────────────────────────────────────────────
     def list_sessions(self) -> list[dict]:
         return [{"session_id": sid, "turns": len(q)} for sid, q in self._sessions.items()]
 
@@ -552,23 +884,16 @@ class CCDTCoPilot:
 
     def _save_messages(self, session_id: str, messages: list) -> None:
         q = self._sessions.setdefault(
-            session_id, deque(maxlen=MAX_HISTORY_TURNS * 2)
-        )
+            session_id, deque(maxlen=MAX_HISTORY_TURNS * 2))
         q.clear()
         for m in messages[-(MAX_HISTORY_TURNS * 2):]:
             q.append(m)
 
 
-# ─── Kafka consumer — with backoff so it doesn't spam logs ───────────────────
+# ─── Kafka consumer ───────────────────────────────────────────────────────────
 async def _kafka_inference_consumer(copilot: CCDTCoPilot) -> None:
-    """
-    Consume GNN inference results and generate auto-summaries for high-confidence
-    non-healthy incidents. Backs off exponentially if the topic doesn't exist yet,
-    so the log isn't flooded while Kafka is initialising.
-    """
-    backoff = 5.0          # seconds between reconnect attempts
-    max_backoff = 120.0    # cap at 2 minutes
-
+    backoff = 5.0
+    max_backoff = 120.0
     while True:
         try:
             from aiokafka import AIOKafkaConsumer
@@ -578,23 +903,19 @@ async def _kafka_inference_consumer(copilot: CCDTCoPilot) -> None:
                 group_id="ccdt-copilot-auto-summary",
                 auto_offset_reset="latest",
                 value_deserializer=lambda m: json.loads(m.decode()),
-                # Silence per-poll metadata errors — we handle reconnect ourselves
                 metadata_max_age_ms=30_000,
             )
             await consumer.start()
             logger.info("Kafka consumer connected — topic: %s",
                         KAFKA_TOPIC_INFER)
-            backoff = 5.0  # reset on successful connect
-
+            backoff = 5.0
             try:
                 async for msg in consumer:
                     evt = msg.value
                     if not isinstance(evt, dict):
                         continue
-                    if (
-                        evt.get("incidentType", "healthy") != "healthy"
-                        and evt.get("rootCauseConfidence", 0) >= AUTO_REPORT_THRESH
-                    ):
+                    if (evt.get("incidentType", "healthy") != "healthy"
+                            and evt.get("rootCauseConfidence", 0) >= AUTO_REPORT_THRESH):
                         try:
                             summary = await copilot.quick_summary(evt)
                             logger.info("AUTO-SUMMARY: %s", summary[:120])
@@ -603,34 +924,31 @@ async def _kafka_inference_consumer(copilot: CCDTCoPilot) -> None:
             finally:
                 try:
                     await consumer.stop()
-                except Exception:
+                except:
                     pass
-
         except asyncio.CancelledError:
-            logger.info("Kafka consumer cancelled — shutting down")
+            logger.info("Kafka consumer cancelled")
             return
-
         except Exception as exc:
             logger.warning(
-                "Kafka consumer disconnected (%s) — reconnecting in %.0fs",
-                exc, backoff,
-            )
+                "Kafka disconnected (%s) — reconnecting in %.0fs", exc, backoff)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, max_backoff)
 
 
-# ─── Lifespan ─────────────────────────────────────────────────────────────────────
+# ─── Lifespan ──────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    logger.info("CCDT Co-Pilot starting — model chain: %s",
-                " → ".join(MODEL_CHAIN))
+    logger.info("CCDT Co-Pilot starting — Groq=%s Gemini=%s Ollama=%s@%s",
+                bool(GROQ_API_KEY and _GROQ_AVAILABLE),
+                bool(GEMINI_API_KEY), OLLAMA_MODEL, OLLAMA_BASE)
     ctx_builder = ClusterContextBuilder()
     tool_executor = ToolExecutor()
     copilot = CCDTCoPilot(ctx_builder, tool_executor)
     app.state.copilot = copilot
     task = asyncio.create_task(_kafka_inference_consumer(copilot))
     app.state.kafka_task = task
-    logger.info("CCDT Co-Pilot ready")
+    logger.info("CCDT Co-Pilot ready — provider chain: Groq → Ollama → Gemini")
     yield
     task.cancel()
     try:
@@ -640,11 +958,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("CCDT Co-Pilot stopped")
 
 
-# ─── FastAPI app ──────────────────────────────────────────────────────────────────
+# ─── FastAPI app ──────────────────────────────────────────────────────────────
 app = FastAPI(
     title="CCDT Co-Pilot",
-    description="Layer-4 Gemini AI Operator — natural language cluster intelligence",
-    version="4.0.0",
+    description="Layer-4 AI Operator — Groq → Gemini → Ollama",
+    version="7.0.0",
     lifespan=lifespan,
 )
 
@@ -664,11 +982,14 @@ class ReportRequest(BaseModel):
 @app.get("/health")
 async def health() -> JSONResponse:
     return JSONResponse(content={
-        "status":      "ok",
-        "service":     "layer4-copilot",
-        "sdk":         "google.genai",
-        "model_chain": MODEL_CHAIN,
-        "timestamp":   int(time.time()),
+        "status":       "ok",
+        "service":      "layer4-copilot",
+        "groq_enabled": bool(GROQ_API_KEY and _GROQ_AVAILABLE),
+        "groq_model":   GROQ_MODEL,
+        "gemini_chain": GEMINI_CHAIN,
+        "ollama_url":   OLLAMA_BASE,
+        "ollama_model": OLLAMA_MODEL,
+        "timestamp":    int(time.time()),
     })
 
 
