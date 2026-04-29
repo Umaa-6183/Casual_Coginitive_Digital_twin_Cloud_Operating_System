@@ -1,5 +1,5 @@
 // ─── CCDT Shared Types ────────────────────────────────────────────────────────
-
+import React from "react";
 export type NodeStatus     = 'healthy' | 'warning' | 'critical';
 export type NodeLayer      = 'network' | 'service' | 'data' | 'system';
 export type Severity       = 'critical' | 'warning' | 'info';
@@ -43,9 +43,9 @@ export interface Alert {
 }
 
 export interface TimelineEvent {
-  time:  string;
-  event: string;
-  icon:  string;
+  time:   string;
+  event:  string;
+  icon:   React.ReactNode;
 }
 
 export interface Incident {
@@ -119,7 +119,7 @@ export interface RLAction {
 
 export interface GhostAction {
   label:       string;
-  icon:        string;
+  icon:        React.ReactNode;
   actionName:  string;
   targetNode:  string;
   parameters?: Record<string, unknown>;

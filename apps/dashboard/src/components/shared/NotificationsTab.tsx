@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useIncidentStore } from '@/stores/useIncidentStore';
 import type { Notification } from '@/types';
-
+import { AlertTriangle, Zap, CheckCircle, Shield, Info } from "lucide-react";
 type FilterType = 'all' | Notification['type'];
 
 const TYPE_COLORS: Record<Notification['type'], string> = {
@@ -12,12 +12,12 @@ const TYPE_COLORS: Record<Notification['type'], string> = {
   info:     '#FFB800',
 };
 
-const TYPE_ICONS: Record<Notification['type'], string> = {
-  alert:    '🚨',
-  action:   '⚡',
-  resolved: '✅',
-  policy:   '🛡',
-  info:     'ℹ',
+const TYPE_ICONS: Record<Notification["type"], React.ReactNode> = {
+  alert: <AlertTriangle size={14} />,
+  action: <Zap size={14} />,
+  resolved: <CheckCircle size={14} />,
+  policy: <Shield size={14} />,
+  info: <Info size={14} />,
 };
 
 const FILTERS: { id: FilterType; label: string }[] = [

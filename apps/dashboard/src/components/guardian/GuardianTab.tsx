@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { GhostPreviewModal } from '@/components/ghost/GhostPreviewModal';
 import { MetricBar } from '@/components/shared/MetricBar';
 import { GlowBadge } from '@/components/shared/GlowBadge';
+import { Ghost, Shield, Zap } from "lucide-react";
 import type { GhostAction, OPAPolicy, RLAction } from '@/types';
 
 interface Props {
@@ -37,98 +38,254 @@ export const GuardianTab: React.FC<Props> = () => {
   const [ghostAction, setGhostAction] = useState<GhostAction | null>(null);
 
   return (
-    <div style={{ height: '100%', overflowY: 'auto', padding: 20 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-
+    <div style={{ height: "100%", overflowY: "auto", padding: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         {/* KPIs */}
-        <div style={{ gridColumn: '1 / -1', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-          {KPI_ITEMS.map(k => (
-            <div key={k.label} style={{
-              background: '#06111F', border: '1px solid #0D2244', borderRadius: 10, padding: '14px 16px',
-            }}>
-              <div style={{ fontSize: 28, fontWeight: 700, color: k.color, fontFamily: 'JetBrains Mono, monospace' }}>
+        <div
+          style={{
+            gridColumn: "1 / -1",
+            display: "grid",
+            gridTemplateColumns: "repeat(4, 1fr)",
+            gap: 12,
+          }}
+        >
+          {KPI_ITEMS.map((k) => (
+            <div
+              key={k.label}
+              style={{
+                background: "#06111F",
+                border: "1px solid #0D2244",
+                borderRadius: 10,
+                padding: "14px 16px",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 28,
+                  fontWeight: 700,
+                  color: k.color,
+                  fontFamily: "JetBrains Mono, monospace",
+                }}
+              >
                 {k.value}
               </div>
-              <div style={{ fontSize: 12, color: '#8899AA', marginTop: 4 }}>{k.label}</div>
-              <div style={{ fontSize: 10, color: '#4A6A8A', marginTop: 2 }}>Target: {k.target}</div>
+              <div style={{ fontSize: 12, color: "#8899AA", marginTop: 4 }}>
+                {k.label}
+              </div>
+              <div style={{ fontSize: 10, color: "#4A6A8A", marginTop: 2 }}>
+                Target: {k.target}
+              </div>
             </div>
           ))}
         </div>
 
         {/* OPA Policies */}
-        <div style={{ background: '#06111F', border: '1px solid #0D2244', borderRadius: 12, padding: 20 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#C8D8E8', marginBottom: 16 }}>
-            🛡 OPA Policy Engine
-            <span style={{ fontSize: 10, color: '#00FF9F', marginLeft: 8, fontFamily: 'JetBrains Mono, monospace' }}>
-              {POLICIES.filter(p => p.violations === 0).length}/{POLICIES.length} PASS
+        <div
+          style={{
+            background: "#06111F",
+            border: "1px solid #0D2244",
+            borderRadius: 12,
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: "#C8D8E8",
+              marginBottom: 16,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <Shield size={14} />
+            <span>OPA Policy Engine</span>
+            <span
+              style={{
+                fontSize: 10,
+                color: "#00FF9F",
+                marginLeft: 8,
+                fontFamily: "JetBrains Mono, monospace",
+              }}
+            >
+              {POLICIES.filter((p) => p.violations === 0).length}/
+              {POLICIES.length} PASS
             </span>
           </div>
-          {POLICIES.map(p => {
+          {POLICIES.map((p) => {
             const hasViol = p.violations > 0;
             return (
-              <div key={p.id} style={{
-                padding: '10px 12px', marginBottom: 8, borderRadius: 8,
-                background: '#040C1A',
-                border: `1px solid ${hasViol ? '#FF3B5C33' : '#0D2244'}`,
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 }}>
-                  <span style={{ fontSize: 11, color: '#00D4FF', fontFamily: 'JetBrains Mono, monospace' }}>
+              <div
+                key={p.id}
+                style={{
+                  padding: "10px 12px",
+                  marginBottom: 8,
+                  borderRadius: 8,
+                  background: "#040C1A",
+                  border: `1px solid ${hasViol ? "#FF3B5C33" : "#0D2244"}`,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 3,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: "#00D4FF",
+                      fontFamily: "JetBrains Mono, monospace",
+                    }}
+                  >
                     {p.name}
                   </span>
-                  <GlowBadge severity={hasViol ? 'critical' : 'info'} label={hasViol ? `${p.violations} VIOLATION` : 'PASS'} />
+                  <GlowBadge
+                    severity={hasViol ? "critical" : "info"}
+                    label={hasViol ? `${p.violations} VIOLATION` : "PASS"}
+                  />
                 </div>
-                <div style={{ fontSize: 11, color: '#4A6A8A', lineHeight: 1.4 }}>{p.description}</div>
+                <div
+                  style={{ fontSize: 11, color: "#4A6A8A", lineHeight: 1.4 }}
+                >
+                  {p.description}
+                </div>
               </div>
             );
           })}
         </div>
 
         {/* RL Actions */}
-        <div style={{ background: '#06111F', border: '1px solid #0D2244', borderRadius: 12, padding: 20 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: '#C8D8E8', marginBottom: 16 }}>
-            ⚡ RL-Proposed Remediations
+        <div
+          style={{
+            background: "#06111F",
+            border: "1px solid #0D2244",
+            borderRadius: 12,
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: "#C8D8E8",
+              marginBottom: 16,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <Zap size={14} />
+            <span>RL-Proposed Remediations</span>
           </div>
-          {RL_ACTIONS.map(a => {
+          {RL_ACTIONS.map((a) => {
             const riskColor = RISK_COLORS[a.risk];
             return (
-              <div key={a.id} style={{
-                padding: '10px 12px', marginBottom: 10, borderRadius: 8,
-                background: '#040C1A', border: '1px solid #0D2244',
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <GlowBadge severity={a.risk === 'LOW' ? 'info' : a.risk === 'MED' ? 'warning' : 'critical'} label={`RISK ${a.risk}`} />
+              <div
+                key={a.id}
+                style={{
+                  padding: "10px 12px",
+                  marginBottom: 10,
+                  borderRadius: 8,
+                  background: "#040C1A",
+                  border: "1px solid #0D2244",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 6,
+                  }}
+                >
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <GlowBadge
+                      severity={
+                        a.risk === "LOW"
+                          ? "info"
+                          : a.risk === "MED"
+                            ? "warning"
+                            : "critical"
+                      }
+                      label={`RISK ${a.risk}`}
+                    />
                     <GlowBadge severity="info" label={a.impact} />
                   </div>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: riskColor, fontFamily: 'JetBrains Mono, monospace' }}>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: riskColor,
+                      fontFamily: "JetBrains Mono, monospace",
+                    }}
+                  >
                     {a.confidence.toFixed(1)}%
                   </span>
                 </div>
-                <div style={{ fontSize: 11, color: '#8899AA', lineHeight: 1.4, marginBottom: 8 }}>{a.action}</div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "#8899AA",
+                    lineHeight: 1.4,
+                    marginBottom: 8,
+                  }}
+                >
+                  {a.action}
+                </div>
                 <div style={{ marginBottom: 8 }}>
-                  <MetricBar label="Confidence" value={Math.round(a.confidence)} color={riskColor} height={4} />
+                  <MetricBar
+                    label="Confidence"
+                    value={Math.round(a.confidence)}
+                    color={riskColor}
+                    height={4}
+                  />
                 </div>
                 <button
-                  onClick={() => setGhostAction({ label: a.action.slice(0, 30) + '…', icon: '👻', actionName: a.actionName, targetNode: a.targetNode })}
+                  onClick={() =>
+                    setGhostAction({
+                      label: a.action.slice(0, 30) + "…",
+                      icon: <Ghost size={16} />,
+                      actionName: a.actionName,
+                      targetNode: a.targetNode,
+                    })
+                  }
                   style={{
-                    width: '100%', padding: '6px 10px', borderRadius: 6, cursor: 'pointer',
-                    background: '#9B5DE515', border: '1px solid #9B5DE544', color: '#9B5DE5',
-                    fontSize: 11, fontWeight: 600, transition: 'background 0.15s',
+                    width: "100%",
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    background: "#9B5DE515",
+                    border: "1px solid #9B5DE544",
+                    color: "#9B5DE5",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    transition: "background 0.15s",
                   }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#9B5DE525')}
-                  onMouseLeave={e => (e.currentTarget.style.background = '#9B5DE515')}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.background = "#9B5DE525")
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.background = "#9B5DE515")
+                  }
                 >
-                  👻 Ghost Preview
+                  <Ghost size={14} />
+                  <span>Ghost Preview</span>
                 </button>
               </div>
             );
           })}
         </div>
-
       </div>
 
       {ghostAction && (
-        <GhostPreviewModal action={ghostAction} onClose={() => setGhostAction(null)} />
+        <GhostPreviewModal
+          action={ghostAction}
+          onClose={() => setGhostAction(null)}
+        />
       )}
     </div>
   );

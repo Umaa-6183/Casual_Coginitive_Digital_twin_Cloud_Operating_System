@@ -12,26 +12,35 @@ import EBPFTab         from '@/components/ebpf/EBPFTab';
 import IncidentsTab    from '@/components/incidents/IncidentsTab';
 import SettingsTab     from '@/components/shared/SettingsTab';
 import NotificationsTab from '@/components/shared/NotificationsTab';
-
+import {
+  Hexagon,
+  Brain,
+  Shield,
+  MessageSquare,
+  Zap,
+  AlertTriangle,
+  Bell,
+  Settings,
+} from "lucide-react";
 // ─── Nav items ────────────────────────────────────────────────────────────────
 type TabId = 'topology' | 'intelligence' | 'guardian' | 'copilot' | 'ebpf' | 'incidents' | 'notifications' | 'settings';
 
 interface NavItem {
-  id:    TabId;
-  icon:  string;
+  id: TabId;
+  icon: React.ReactNode;
   label: string;
   badge?: number | string;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: 'topology',      icon: '⬡',  label: 'Topology'      },
-  { id: 'intelligence',  icon: '🧠',  label: 'Intelligence'  },
-  { id: 'guardian',      icon: '🛡',  label: 'Guardian'      },
-  { id: 'copilot',       icon: '💬',  label: 'Co-Pilot'      },
-  { id: 'ebpf',          icon: '⚡',  label: 'eBPF Sensors'  },
-  { id: 'incidents',     icon: '🚨',  label: 'Incidents'     },
-  { id: 'notifications', icon: '🔔',  label: 'Notifications' },
-  { id: 'settings',      icon: '⚙',  label: 'Settings'      },
+  { id: "topology",      icon: <Hexagon size={16} />, label: "Topology" },
+  { id: "intelligence",  icon: <Brain size={16} />, label: "Intelligence" },
+  { id: "guardian",      icon: <Shield size={16} />, label: "Guardian" },
+  { id: "copilot",       icon: <MessageSquare size={16} />, label: "Co-Pilot" },
+  { id: "ebpf",          icon: <Zap size={16} />, label: "eBPF Sensors" },
+  { id: "incidents",     icon: <AlertTriangle size={16} />, label: "Incidents" },
+  { id: "notifications", icon: <Bell size={16} />, label: "Notifications" },
+  { id: "settings",      icon: <Settings size={16} />, label: "Settings" },
 ];
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
