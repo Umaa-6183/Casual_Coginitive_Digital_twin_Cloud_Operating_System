@@ -1,0 +1,120 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CCDT Business Facade — Docker Compose overlay
+# File: docker-compose.facade.yml
+#
+# USAGE:
+#   docker compose -f docker-compose.yml -f docker-compose.facade.yml up -d
+#
+# What this adds / overrides:
+#   1. mock-api        — NEW FastAPI service (postgres + redis → JSON API)
+#   2. demo-nginx      — OVERRIDE adds Mock UI files and new nginx config
+#   3. demo-traffic-gen — OVERRIDE replaces headless HTTP with human-like v2
+#
+# The CCDT Brain (layer2-gnn, layer3-guardian, layer4-copilot, kafka, opa)
+# is NOT touched.
+#
+# ── PORT PHILOSOPHY ──────────────────────────────────────────────────────────
+# Inside a Docker network, services talk on CONTAINER-internal ports, NOT the
+# host-mapped ports shown in docker-compose.yml's `ports:` section.
+#
+#   Service           Container port   Host mapping (for your laptop only)
+#   demo-postgres         5432              5433
+#   demo-redis            6379              6380
+#   demo-nginx             80              8088
+#   mock-api             8089              (internal only — no host mapping)
+#
+# All env-var connection strings in this file use CONTAINER ports.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── NEW: Mock API Backend ──────────────────────────────────────────────────
+  mock-api:
+    build:
+      context:    ./mock-api
+      dockerfile: Dockerfile
+    image:     ccdt/mock-api:dev
+    container_name: ccdt-mock-api-1
+    restart:   unless-stopped
+    environment:
+      # Container-internal ports (5432, 6379) — NOT host-mapped ports (5433, 6380)
+      PG_DSN:    "postgresql://ccdt:ccdt@demo-postgres:5432/ccdt"
+      REDIS_URL: "redis://demo-redis:6379/0"
+    networks:
+      - ccdt-net
+    depends_on:
+      demo-postgres:
+        condition: service_healthy   # wait for postgres healthcheck to pass
+      demo-redis:
+        condition: service_healthy   # wait for redis healthcheck to pass
+    healthcheck:
+      test:         ["CMD", "curl", "-sf", "http://localhost:8089/ready"]
+      interval:     10s
+      timeout:       5s
+      retries:       5
+      start_period: 30s
+    labels:
+      com.ccdt.component: "business-facade"
+      com.ccdt.role:      "mock-api"
+
+  # ── OVERRIDE: demo-nginx ──────────────────────────────────────────────────
+  # Adds the Mock UI static files and replaces the nginx server config.
+  #
+  # NO new `ports:` entry here — docker-compose.yml already maps host:8088
+  # → container:80. Adding another port entry would cause Docker to bind
+  # host port 8088 twice and fail with "address already in use".
+  #
+  # HOW THE VOLUME OVERRIDE WORKS:
+  # Docker Compose merges volume lists. The new mount targets the SAME path
+  # (/etc/nginx/conf.d/default.conf) as the original, so the override wins.
+  # This replaces the original server block with our facade-default.conf.
+  # ──────────────────────────────────────────────────────────────────────────
+  demo-nginx:
+    volumes:
+      # Replace the original server config with the Business Facade config
+      # (same target path → override mount wins in Compose merge)
+      - ./nginx/facade-default.conf:/etc/nginx/conf.d/default.conf:ro
+      # Serve the NexaOps SaaS Portal static files
+      - ./mock-ui:/usr/share/nginx/mock-ui:ro
+    depends_on:
+      mock-api:
+        condition: service_started
+    labels:
+      com.ccdt.component: "business-facade"
+      com.ccdt.role:      "nginx-facade"
+
+  # ── OVERRIDE: demo-traffic-gen ────────────────────────────────────────────
+  # Replaces the original headless HTTP script with the human-like v2 simulator.
+  # Builds from ./traffic-gen/Dockerfile (copy traffic_gen_v2.py there).
+  # ──────────────────────────────────────────────────────────────────────────
+  demo-traffic-gen:
+    build:
+      context:    ./traffic-gen
+      dockerfile: Dockerfile
+    image:     ccdt/traffic-gen:dev
+    container_name: ccdt-demo-traffic-gen-1
+    restart:   unless-stopped
+    environment:
+      # Container-internal nginx URL (port 80, NOT host-mapped port 8088)
+      MOCK_API_URL:      "http://demo-nginx:80"
+      CONCURRENT_USERS:  "100"
+      THINK_TIME_MIN:    "0.5"
+      THINK_TIME_MAX:    "4.0"
+      SESSION_TTL_S:     "300"
+      REQUEST_TIMEOUT_S: "8.0"
+      STATS_INTERVAL_S:  "10"
+      LOG_LEVEL:         "INFO"
+    networks:
+      - ccdt-net
+    depends_on:
+      demo-nginx:
+        condition: service_started
+      mock-api:
+        condition: service_started
+    labels:
+      com.ccdt.component: "business-facade"
+      com.ccdt.role:      "traffic-gen-v2"
+
+networks:
+  ccdt-net:
+    external: true    # defined in docker-compose.yml — must exist before starting

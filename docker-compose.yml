@@ -154,39 +154,21 @@ services:
     image: confluentinc/cp-kafka:7.7.0
     depends_on:
       kafka:
-        condition: service_healthy
+        condition: service_started
     networks: [ccdt-net]
     restart: "no"
-    command: |
-      bash -c "
+    command:
+      - bash
+      - -c
+      - |
         echo 'Creating CCDT Kafka topics ...'
-        kafka-topics --bootstrap-server kafka:9092 \
-          --create --if-not-exists --topic ccdt.topology.updates \
-          --partitions 1 --replication-factor 1 && \
-        /bin/kafka-topics --bootstrap-server kafka:9092 \
-          --create --if-not-exists --topic ccdt.ebpf.events \
-          --partitions 4 --replication-factor 1 \
-          --config retention.ms=86400000 \
-          --config compression.type=lz4 \
-          --config max.message.bytes=65536
-        kafka-topics --bootstrap-server kafka:9092 \
-          --create --if-not-exists --topic ccdt.gnn.inference \
-          --partitions 2 --replication-factor 1 \
-          --config retention.ms=604800000 \
-          --config compression.type=gzip
-        kafka-topics --bootstrap-server kafka:9092 \
-          --create --if-not-exists --topic ccdt.guardian.actions \
-          --partitions 2 --replication-factor 1 \
-          --config retention.ms=2592000000 \
-          --config compression.type=gzip
-        kafka-topics --bootstrap-server kafka:9092 \
-          --create --if-not-exists --topic ccdt.incidents \
-          --partitions 2 --replication-factor 1 \
-          --config cleanup.policy=compact,delete \
-          --config retention.ms=7776000000
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ccdt.topology.updates --partitions 1 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ccdt.ebpf.events --partitions 4 --replication-factor 1 --config retention.ms=86400000 --config compression.type=lz4 --config max.message.bytes=65536
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ccdt.gnn.inference --partitions 2 --replication-factor 1 --config retention.ms=604800000 --config compression.type=gzip
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ccdt.guardian.actions --partitions 2 --replication-factor 1 --config retention.ms=2592000000 --config compression.type=gzip
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ccdt.incidents --partitions 2 --replication-factor 1 --config cleanup.policy=compact,delete --config retention.ms=7776000000
         echo 'All topics created:'
         kafka-topics --bootstrap-server kafka:9092 --list
-      "
     logging: *default-logging
 
   # ── Kafka UI (dev convenience) ─────────────────────────────────────────────

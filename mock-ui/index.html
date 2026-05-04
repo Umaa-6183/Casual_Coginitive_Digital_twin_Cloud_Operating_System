@@ -1,0 +1,2151 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+    <title>NexaOps — Cloud Operations Platform</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500;600&display=swap"
+        rel="stylesheet" />
+    <style>
+        :root {
+            --bg-base: #080c12;
+            --bg-panel: #0e1420;
+            --bg-card: #121928;
+            --bg-hover: #1a2436;
+            --border: #1e2d45;
+            --border-hi: #2a4060;
+            --cyan: #00d4ff;
+            --cyan-dim: #00d4ff22;
+            --cyan-soft: #00d4ff88;
+            --amber: #f0a020;
+            --amber-dim: #f0a02022;
+            --green: #00e890;
+            --green-dim: #00e89022;
+            --red: #ff4060;
+            --red-dim: #ff406022;
+            --purple: #9b5de5;
+            --purple-dim: #9b5de522;
+            --text-primary: #e2eaf5;
+            --text-secondary: #6a86a8;
+            --text-muted: #3a5070;
+            --font-display: 'Syne', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0
+        }
+
+        body {
+            background: var(--bg-base);
+            color: var(--text-primary);
+            font-family: var(--font-mono);
+            font-size: 13px;
+            min-height: 100vh;
+            overflow-x: hidden
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0, 212, 255, .013) 2px, rgba(0, 212, 255, .013) 4px);
+            pointer-events: none;
+            z-index: 999
+        }
+
+        /* CRASH BANNER */
+        #crash-banner {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(90deg, #ff1a40, #ff4060, #ff1a40);
+            background-size: 200% 100%;
+            animation: bannerPulse 1s ease infinite;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            text-align: center;
+            padding: 10px;
+            z-index: 10000;
+            letter-spacing: .12em;
+            text-transform: uppercase
+        }
+
+        @keyframes bannerPulse {
+
+            0%,
+            100% {
+                background-position: 0% 50%;
+                opacity: 1
+            }
+
+            50% {
+                background-position: 100% 50%;
+                opacity: .88
+            }
+        }
+
+        /* HEADER */
+        header {
+            background: var(--bg-panel);
+            border-bottom: 1px solid var(--border);
+            padding: 0 28px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px
+        }
+
+        .logo-icon {
+            width: 28px;
+            height: 28px;
+            background: linear-gradient(135deg, var(--cyan), #0070ff);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px
+        }
+
+        .logo-name {
+            font-family: var(--font-display);
+            font-size: 18px;
+            font-weight: 800;
+            letter-spacing: -.02em
+        }
+
+        .logo-tag {
+            font-size: 10px;
+            color: var(--text-muted);
+            letter-spacing: .1em;
+            text-transform: uppercase;
+            margin-left: 4px
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 20px
+        }
+
+        .sys-status {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 11px;
+            color: var(--text-secondary)
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--green);
+            box-shadow: 0 0 8px var(--green);
+            animation: pulse 2s ease infinite
+        }
+
+        .status-dot.degraded {
+            background: var(--amber);
+            box-shadow: 0 0 8px var(--amber);
+            animation: pulse .5s ease infinite
+        }
+
+        .status-dot.critical {
+            background: var(--red);
+            box-shadow: 0 0 12px var(--red);
+            animation: pulse .3s ease infinite
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1
+            }
+
+            50% {
+                opacity: .4
+            }
+        }
+
+        .user-badge {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 5px 12px;
+            font-size: 11px;
+            color: var(--text-secondary)
+        }
+
+        .user-badge span {
+            color: var(--cyan)
+        }
+
+        /* NAV */
+        nav {
+            background: var(--bg-panel);
+            border-bottom: 1px solid var(--border);
+            padding: 0 28px;
+            display: flex
+        }
+
+        .nav-tab {
+            padding: 11px 18px;
+            font-size: 11px;
+            color: var(--text-muted);
+            cursor: pointer;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            border-bottom: 2px solid transparent;
+            transition: all .2s;
+            user-select: none
+        }
+
+        .nav-tab.active {
+            color: var(--cyan);
+            border-bottom-color: var(--cyan)
+        }
+
+        .nav-tab:hover:not(.active) {
+            color: var(--text-secondary)
+        }
+
+        /* LAYOUT */
+        main {
+            padding: 24px 28px;
+            max-width: 1400px;
+            margin: 0 auto
+        }
+
+        .tab-view {
+            display: none
+        }
+
+        .tab-view.active {
+            display: block
+        }
+
+        /* KPI CARDS */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 24px
+        }
+
+        .kpi-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 18px 20px;
+            position: relative;
+            overflow: hidden;
+            transition: border-color .3s
+        }
+
+        .kpi-card::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--cyan);
+            opacity: .6
+        }
+
+        .kpi-card.amber::after {
+            background: var(--amber)
+        }
+
+        .kpi-card.green::after {
+            background: var(--green)
+        }
+
+        .kpi-card.purple::after {
+            background: var(--purple)
+        }
+
+        .kpi-card.error {
+            border-color: var(--red);
+            animation: shake .5s ease
+        }
+
+        .kpi-card.error::after {
+            background: var(--red)
+        }
+
+        @keyframes shake {
+
+            0%,
+            100% {
+                transform: translateX(0)
+            }
+
+            25% {
+                transform: translateX(-4px)
+            }
+
+            75% {
+                transform: translateX(4px)
+            }
+        }
+
+        .kpi-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: .12em;
+            margin-bottom: 10px
+        }
+
+        .kpi-value {
+            font-family: var(--font-display);
+            font-size: 32px;
+            font-weight: 700;
+            line-height: 1;
+            margin-bottom: 8px;
+            transition: color .3s
+        }
+
+        .kpi-value.error {
+            color: var(--red)
+        }
+
+        .kpi-delta {
+            font-size: 11px;
+            color: var(--green)
+        }
+
+        .kpi-delta.neg {
+            color: var(--red)
+        }
+
+        .kpi-spark {
+            position: absolute;
+            bottom: 12px;
+            right: 16px;
+            display: flex;
+            align-items: flex-end;
+            gap: 2px;
+            height: 24px
+        }
+
+        .kpi-spark .bar {
+            width: 4px;
+            opacity: .3;
+            border-radius: 2px 2px 0 0
+        }
+
+        /* METRICS ROW */
+        .metrics-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 24px
+        }
+
+        .metric-mini {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px 20px
+        }
+
+        .metric-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: .12em;
+            margin-bottom: 6px
+        }
+
+        .metric-val {
+            font-family: var(--font-display);
+            font-size: 22px;
+            font-weight: 700
+        }
+
+        .metric-val.cyan {
+            color: var(--cyan)
+        }
+
+        .metric-val.green {
+            color: var(--green)
+        }
+
+        .metric-val.amber {
+            color: var(--amber)
+        }
+
+        .metric-sub {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 4px
+        }
+
+        /* TWO-COL */
+        .two-col {
+            display: grid;
+            grid-template-columns: 1fr 380px;
+            gap: 16px;
+            margin-bottom: 24px
+        }
+
+        /* PANELS */
+        .panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden
+        }
+
+        .panel-header {
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between
+        }
+
+        .panel-title {
+            font-family: var(--font-display);
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: -.01em
+        }
+
+        .badge {
+            font-size: 10px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            letter-spacing: .08em;
+            border: 1px solid
+        }
+
+        .badge-cyan {
+            background: var(--cyan-dim);
+            color: var(--cyan);
+            border-color: var(--cyan-soft)
+        }
+
+        .badge-green {
+            background: var(--green-dim);
+            color: var(--green);
+            border-color: var(--green)
+        }
+
+        .badge-amber {
+            background: var(--amber-dim);
+            color: var(--amber);
+            border-color: var(--amber)
+        }
+
+        .badge-red {
+            background: var(--red-dim);
+            color: var(--red);
+            border-color: var(--red)
+        }
+
+        .badge-purple {
+            background: var(--purple-dim);
+            color: var(--purple);
+            border-color: var(--purple)
+        }
+
+        /* TABLE */
+        .table-wrap {
+            overflow-x: auto
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse
+        }
+
+        thead th {
+            padding: 10px 16px;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: .14em;
+            color: var(--text-muted);
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-panel);
+            white-space: nowrap
+        }
+
+        tbody tr {
+            border-bottom: 1px solid var(--border);
+            transition: background .15s
+        }
+
+        tbody tr:hover {
+            background: var(--bg-hover)
+        }
+
+        tbody td {
+            padding: 11px 16px;
+            font-size: 12px;
+            white-space: nowrap
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 500
+        }
+
+        .pill-green {
+            background: var(--green-dim);
+            color: var(--green)
+        }
+
+        .pill-amber {
+            background: var(--amber-dim);
+            color: var(--amber)
+        }
+
+        .pill-red {
+            background: var(--red-dim);
+            color: var(--red)
+        }
+
+        .pill .dot {
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: currentColor
+        }
+
+        .cyan-text {
+            color: var(--cyan);
+            font-weight: 500
+        }
+
+        .muted-text {
+            color: var(--text-muted);
+            font-size: 11px
+        }
+
+        /* FEED */
+        .feed-list {
+            max-height: 340px;
+            overflow-y: auto;
+            padding: 8px 0
+        }
+
+        .feed-list::-webkit-scrollbar {
+            width: 4px
+        }
+
+        .feed-list::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 2px
+        }
+
+        .feed-item {
+            padding: 10px 20px;
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            border-bottom: 1px solid var(--border);
+            animation: fadeSlide .4s ease
+        }
+
+        @keyframes fadeSlide {
+            from {
+                opacity: 0;
+                transform: translateY(-4px)
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0)
+            }
+        }
+
+        .feed-icon {
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            flex-shrink: 0;
+            margin-top: 1px
+        }
+
+        .fi-login {
+            background: var(--cyan-dim);
+            color: var(--cyan)
+        }
+
+        .fi-order {
+            background: var(--green-dim);
+            color: var(--green)
+        }
+
+        .fi-error {
+            background: var(--red-dim);
+            color: var(--red)
+        }
+
+        .fi-api {
+            background: var(--amber-dim);
+            color: var(--amber)
+        }
+
+        .feed-body {
+            flex: 1;
+            min-width: 0
+        }
+
+        .feed-text {
+            font-size: 11px;
+            color: var(--text-secondary);
+            line-height: 1.4
+        }
+
+        .feed-text strong {
+            color: var(--text-primary)
+        }
+
+        .feed-time {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 2px
+        }
+
+        /* INVENTORY GRID (dashboard) */
+        .inv-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1px;
+            background: var(--border)
+        }
+
+        .inv-cell {
+            background: var(--bg-card);
+            padding: 16px;
+            transition: background .15s
+        }
+
+        .inv-cell:hover {
+            background: var(--bg-hover)
+        }
+
+        .inv-sku {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-bottom: 4px
+        }
+
+        .inv-name {
+            font-size: 12px;
+            font-weight: 500;
+            margin-bottom: 8px
+        }
+
+        .bar-track {
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            margin-bottom: 6px
+        }
+
+        .bar-fill {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 1s ease
+        }
+
+        .bar-ok {
+            background: var(--cyan)
+        }
+
+        .bar-mid {
+            background: var(--amber)
+        }
+
+        .bar-low {
+            background: var(--red)
+        }
+
+        .inv-meta {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            color: var(--text-muted)
+        }
+
+        /* SPINNER */
+        .spin-wrap {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 48px;
+            gap: 16px
+        }
+
+        .spin-wrap.on {
+            display: flex
+        }
+
+        .spinner {
+            width: 36px;
+            height: 36px;
+            border: 3px solid var(--border);
+            border-top-color: var(--cyan);
+            border-radius: 50%;
+            animation: spin .8s linear infinite
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg)
+            }
+        }
+
+        .spin-text {
+            font-size: 12px;
+            color: var(--text-muted)
+        }
+
+        /* ERROR STATE */
+        .err-state {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 48px;
+            gap: 12px;
+            text-align: center
+        }
+
+        .err-state.on {
+            display: flex
+        }
+
+        .err-code {
+            font-family: var(--font-display);
+            font-size: 48px;
+            font-weight: 800;
+            color: var(--red)
+        }
+
+        .err-msg {
+            font-size: 12px;
+            color: var(--text-muted)
+        }
+
+        .err-detail {
+            font-size: 10px;
+            color: var(--text-muted);
+            background: var(--bg-panel);
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: 1px solid var(--border)
+        }
+
+        /* ANALYTICS */
+        .chart-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 16px
+        }
+
+        .chart-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px
+        }
+
+        .chart-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: .1em;
+            margin-bottom: 14px
+        }
+
+        .bar-chart-h {
+            display: flex;
+            align-items: flex-end;
+            gap: 5px;
+            height: 110px
+        }
+
+        .bc-col {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 3px
+        }
+
+        .bc-bar {
+            width: 100%;
+            border-radius: 3px 3px 0 0;
+            min-height: 4px;
+            transition: height .6s ease
+        }
+
+        .bc-val {
+            font-size: 9px
+        }
+
+        .bc-lbl {
+            font-size: 8px;
+            color: var(--text-muted)
+        }
+
+        .an-summary {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 20px
+        }
+
+        .an-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center
+        }
+
+        .an-val {
+            font-family: var(--font-display);
+            font-size: 30px;
+            font-weight: 700
+        }
+
+        .an-lbl {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 5px
+        }
+
+        .breakdown-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 14px;
+            padding: 20px
+        }
+
+        .bd-card {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center
+        }
+
+        .bd-val {
+            font-family: var(--font-display);
+            font-size: 38px;
+            font-weight: 700
+        }
+
+        .bd-lbl {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 5px;
+            text-transform: uppercase;
+            letter-spacing: .1em
+        }
+
+        .bd-pct {
+            font-size: 13px;
+            margin-top: 6px
+        }
+
+        /* INVENTORY TAB */
+        .inv-mgmt-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            padding: 16px
+        }
+
+        .inv-card {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px
+        }
+
+        .inv-card-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px
+        }
+
+        .inv-sku-sm {
+            font-size: 10px;
+            color: var(--text-muted)
+        }
+
+        .inv-name-sm {
+            font-size: 12px;
+            font-weight: 500;
+            margin-top: 2px
+        }
+
+        .inv-qty-big {
+            font-family: var(--font-display);
+            font-size: 26px;
+            font-weight: 700;
+            margin: 6px 0
+        }
+
+        .inv-qty-big.iq-ok {
+            color: var(--green)
+        }
+
+        .inv-qty-big.iq-low {
+            color: var(--amber)
+        }
+
+        .inv-qty-big.iq-crit {
+            color: var(--red)
+        }
+
+        .status-chip {
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 3px;
+            border: 1px solid
+        }
+
+        .sc-ok {
+            background: var(--green-dim);
+            color: var(--green);
+            border-color: var(--green)
+        }
+
+        .sc-low {
+            background: var(--amber-dim);
+            color: var(--amber);
+            border-color: var(--amber)
+        }
+
+        .sc-crit {
+            background: var(--red-dim);
+            color: var(--red);
+            border-color: var(--red)
+        }
+
+        /* SETTINGS */
+        .settings-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px
+        }
+
+        .set-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px
+        }
+
+        .set-title {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: .12em;
+            padding-bottom: 12px;
+            margin-bottom: 4px;
+            border-bottom: 1px solid var(--border)
+        }
+
+        .set-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border)
+        }
+
+        .set-row:last-of-type {
+            border-bottom: none
+        }
+
+        .set-key {
+            font-size: 12px;
+            color: var(--text-primary)
+        }
+
+        .set-sub {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 2px
+        }
+
+        .set-val {
+            font-size: 11px;
+            color: var(--cyan)
+        }
+
+        .set-select {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            padding: 4px 8px;
+            outline: none;
+            cursor: pointer
+        }
+
+        .toggle {
+            width: 40px;
+            height: 22px;
+            border-radius: 11px;
+            position: relative;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: all .2s
+        }
+
+        .toggle.on {
+            background: var(--cyan-dim);
+            border: 1px solid var(--cyan)
+        }
+
+        .toggle.off {
+            background: var(--bg-hover);
+            border: 1px solid var(--border)
+        }
+
+        .toggle-thumb {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            position: absolute;
+            top: 2px;
+            transition: left .2s
+        }
+
+        .toggle.on .toggle-thumb {
+            left: 20px;
+            background: var(--cyan);
+            box-shadow: 0 0 6px var(--cyan)
+        }
+
+        .toggle.off .toggle-thumb {
+            left: 2px;
+            background: var(--text-muted)
+        }
+
+        .btn {
+            padding: 7px 14px;
+            border-radius: 5px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            cursor: pointer;
+            border: 1px solid var(--border);
+            background: var(--bg-hover);
+            color: var(--text-secondary);
+            transition: all .2s
+        }
+
+        .btn:hover {
+            border-color: var(--cyan);
+            color: var(--cyan)
+        }
+
+        .btn-warn {
+            border-color: var(--amber);
+            color: var(--amber);
+            background: var(--amber-dim)
+        }
+
+        .btn-warn:hover {
+            border-color: var(--red);
+            color: var(--red)
+        }
+
+        #conn-result {
+            font-size: 11px;
+            margin-top: 10px;
+            display: none
+        }
+
+        /* FILTER BAR */
+        .filter-bar {
+            display: flex;
+            gap: 10px;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            align-items: center;
+            flex-wrap: wrap
+        }
+
+        .f-select {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-secondary);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            padding: 5px 10px;
+            outline: none
+        }
+
+        .f-input {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-family: var(--font-mono);
+            font-size: 11px;
+            padding: 5px 10px;
+            outline: none;
+            width: 210px
+        }
+
+        .f-input::placeholder {
+            color: var(--text-muted)
+        }
+
+        .f-count {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-left: auto
+        }
+
+        /* FOOTER */
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 14px 28px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 10px;
+            color: var(--text-muted);
+            letter-spacing: .06em
+        }
+
+        .footer-health {
+            display: flex;
+            gap: 16px
+        }
+
+        .h-item {
+            display: flex;
+            align-items: center;
+            gap: 5px
+        }
+
+        .h-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--green)
+        }
+
+        .h-dot.err {
+            background: var(--red);
+            animation: pulse .3s ease infinite
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="crash-banner">&#9888; SYSTEM DEGRADED &#8212; SERVICE DISRUPTION DETECTED &#8212; AUTOMATED RECOVERY IN
+        PROGRESS</div>
+
+    <header>
+        <div class="logo">
+            <div class="logo-icon">&#11041;</div>
+            <div><span class="logo-name">NexaOps</span><span class="logo-tag">v4.2.1</span></div>
+        </div>
+        <div class="header-right">
+            <div class="sys-status">
+                <div class="status-dot" id="sys-dot"></div>
+                <span id="sys-label">All Systems Operational</span>
+            </div>
+            <div class="user-badge">Logged in as <span>admin@nexaops.io</span></div>
+            <div class="user-badge" id="session-id">Session: <span>&#8212;</span></div>
+        </div>
+    </header>
+
+    <nav>
+        <div class="nav-tab active" data-tab="dashboard">Dashboard</div>
+        <div class="nav-tab" data-tab="orders">Orders</div>
+        <div class="nav-tab" data-tab="inventory">Inventory</div>
+        <div class="nav-tab" data-tab="analytics">Analytics</div>
+        <div class="nav-tab" data-tab="settings">Settings</div>
+    </nav>
+
+    <main>
+
+        <!-- ═══════════════════════════════════════════ DASHBOARD ═══ -->
+        <div class="tab-view active" id="tab-dashboard">
+
+            <div class="kpi-grid">
+                <div class="kpi-card" id="kc-revenue">
+                    <div class="kpi-label">Total Revenue (24h)</div>
+                    <div class="kpi-value" id="kv-revenue">$&#8212;</div>
+                    <div class="kpi-delta" id="kd-revenue">loading…</div>
+                    <div class="kpi-spark" id="ks-revenue"></div>
+                </div>
+                <div class="kpi-card amber" id="kc-orders">
+                    <div class="kpi-label">Active Orders</div>
+                    <div class="kpi-value" id="kv-orders">&#8212;</div>
+                    <div class="kpi-delta" id="kd-orders">&#8212; pending</div>
+                    <div class="kpi-spark" id="ks-orders"></div>
+                </div>
+                <div class="kpi-card green" id="kc-users">
+                    <div class="kpi-label">Live Sessions</div>
+                    <div class="kpi-value" id="kv-users">&#8212;</div>
+                    <div class="kpi-delta">concurrent users</div>
+                    <div class="kpi-spark" id="ks-users"></div>
+                </div>
+                <div class="kpi-card" id="kc-latency">
+                    <div class="kpi-label">Avg Response Time</div>
+                    <div class="kpi-value" id="kv-latency">&#8212;ms</div>
+                    <div class="kpi-delta" id="kd-latency">p95: &#8212;ms</div>
+                    <div class="kpi-spark" id="ks-latency"></div>
+                </div>
+            </div>
+
+            <div class="metrics-row">
+                <div class="metric-mini">
+                    <div class="metric-label">DB Query Rate</div>
+                    <div class="metric-val cyan" id="mv-qps">&#8212;</div>
+                    <div class="metric-sub">queries / second</div>
+                </div>
+                <div class="metric-mini">
+                    <div class="metric-label">Cache Hit Rate</div>
+                    <div class="metric-val green" id="mv-cache">&#8212;%</div>
+                    <div class="metric-sub">Redis session cache</div>
+                </div>
+                <div class="metric-mini">
+                    <div class="metric-label">Error Rate (5 min)</div>
+                    <div class="metric-val amber" id="mv-errs">&#8212;</div>
+                    <div class="metric-sub">HTTP 5xx responses</div>
+                </div>
+            </div>
+
+            <div class="two-col">
+                <div class="panel">
+                    <div class="panel-header">
+                        <div class="panel-title">Recent Orders</div>
+                        <div class="badge badge-green" id="orders-badge">LIVE</div>
+                    </div>
+                    <div class="spin-wrap" id="orders-spin">
+                        <div class="spinner"></div>
+                        <div class="spin-text">Fetching orders from PostgreSQL&#8230;</div>
+                    </div>
+                    <div class="err-state" id="orders-err">
+                        <div class="err-code">502</div>
+                        <div class="err-msg">Bad Gateway &#8212; Database Unreachable</div>
+                        <div class="err-detail">upstream connect error or disconnect/reset before headers. reset reason:
+                            connection failure</div>
+                    </div>
+                    <div class="table-wrap" id="orders-table">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Order ID</th>
+                                    <th>Customer</th>
+                                    <th>Product</th>
+                                    <th>Amount</th>
+                                    <th>Status</th>
+                                    <th>Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="orders-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">
+                        <div class="panel-title">Live Activity</div>
+                        <div class="badge badge-cyan">STREAMING</div>
+                    </div>
+                    <div class="feed-list" id="feed-list"></div>
+                </div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">Inventory Status</div>
+                    <div class="badge badge-amber">12 SKUs</div>
+                </div>
+                <div class="spin-wrap" id="inv-spin">
+                    <div class="spinner"></div>
+                    <div class="spin-text">Querying inventory from PostgreSQL&#8230;</div>
+                </div>
+                <div class="err-state" id="inv-err">
+                    <div class="err-code">503</div>
+                    <div class="err-msg">Service Unavailable &#8212; PostgreSQL Connection Lost</div>
+                    <div class="err-detail">FATAL: connection to server on socket "/var/run/postgresql/.s.PGSQL.5432"
+                        failed</div>
+                </div>
+                <div class="inv-grid" id="inv-grid"></div>
+            </div>
+
+        </div><!-- /dashboard -->
+
+
+        <!-- ═══════════════════════════════════════════════ ORDERS ═══ -->
+        <div class="tab-view" id="tab-orders">
+            <div class="kpi-grid" style="margin-bottom:20px">
+                <div class="kpi-card">
+                    <div class="kpi-label">Total Orders</div>
+                    <div class="kpi-value" id="ot-total">&#8212;</div>
+                    <div class="kpi-delta">all statuses</div>
+                </div>
+                <div class="kpi-card green">
+                    <div class="kpi-label">Fulfilled</div>
+                    <div class="kpi-value" id="ot-ful">&#8212;</div>
+                    <div class="kpi-delta">completed</div>
+                </div>
+                <div class="kpi-card amber">
+                    <div class="kpi-label">Pending</div>
+                    <div class="kpi-value" id="ot-pen">&#8212;</div>
+                    <div class="kpi-delta">awaiting processing</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Failed</div>
+                    <div class="kpi-value" id="ot-fail" style="color:var(--red)">&#8212;</div>
+                    <div class="kpi-delta" style="color:var(--text-muted)">requires attention</div>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">Order Management</div>
+                    <div class="badge badge-green">LIVE</div>
+                </div>
+                <div class="filter-bar">
+                    <select class="f-select" id="of-status" onchange="filterOrders()">
+                        <option value="all">All Statuses</option>
+                        <option value="fulfilled">Fulfilled</option>
+                        <option value="pending">Pending</option>
+                        <option value="failed">Failed</option>
+                    </select>
+                    <input class="f-input" id="of-search" placeholder="Search customer or product&#8230;"
+                        oninput="filterOrders()" />
+                    <span class="f-count" id="of-count">&#8212; orders</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Order ID</th>
+                                <th>Customer</th>
+                                <th>Product</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                                <th>Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="all-orders-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div><!-- /orders -->
+
+
+        <!-- ═══════════════════════════════════════════ INVENTORY ═══ -->
+        <div class="tab-view" id="tab-inventory">
+            <div class="kpi-grid" style="margin-bottom:20px">
+                <div class="kpi-card green">
+                    <div class="kpi-label">Total SKUs</div>
+                    <div class="kpi-value">12</div>
+                    <div class="kpi-delta">active product lines</div>
+                </div>
+                <div class="kpi-card amber">
+                    <div class="kpi-label">Low Stock</div>
+                    <div class="kpi-value" id="it-low">&#8212;</div>
+                    <div class="kpi-delta">below 25% threshold</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Total Units</div>
+                    <div class="kpi-value" id="it-units">&#8212;</div>
+                    <div class="kpi-delta">across all SKUs</div>
+                </div>
+                <div class="kpi-card purple">
+                    <div class="kpi-label">Last Updated</div>
+                    <div class="kpi-value" id="it-updated" style="font-size:18px;color:var(--purple)">&#8212;</div>
+                    <div class="kpi-delta" style="color:var(--text-muted)">auto-managed</div>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">Stock Management</div>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <div class="badge badge-cyan">LIVE</div>
+                        <button class="btn btn-warn" onclick="reseedInventory()">&#8635; Reseed Stock</button>
+                    </div>
+                </div>
+                <div class="spin-wrap" id="im-spin">
+                    <div class="spinner"></div>
+                    <div class="spin-text">Loading inventory&#8230;</div>
+                </div>
+                <div class="inv-mgmt-grid" id="inv-mgmt-grid"></div>
+            </div>
+        </div><!-- /inventory -->
+
+
+        <!-- ═══════════════════════════════════════════ ANALYTICS ═══ -->
+        <div class="tab-view" id="tab-analytics">
+            <div class="an-summary">
+                <div class="an-card">
+                    <div class="an-val" style="color:var(--cyan)" id="an-rev">&#8212;</div>
+                    <div class="an-lbl">Total Revenue (24 h)</div>
+                </div>
+                <div class="an-card">
+                    <div class="an-val" style="color:var(--green)" id="an-qps">&#8212;</div>
+                    <div class="an-lbl">DB Queries / sec</div>
+                </div>
+                <div class="an-card">
+                    <div class="an-val" style="color:var(--amber)" id="an-lat">&#8212;</div>
+                    <div class="an-lbl">Response Time p95</div>
+                </div>
+            </div>
+            <div class="chart-grid">
+                <div class="chart-box">
+                    <div class="chart-label">DB Query Rate &#8212; last 12 polls</div>
+                    <div class="bar-chart-h" id="ch-qps"></div>
+                </div>
+                <div class="chart-box">
+                    <div class="chart-label">Latency ms &#8212; last 12 polls</div>
+                    <div class="bar-chart-h" id="ch-lat"></div>
+                </div>
+            </div>
+            <div class="chart-grid">
+                <div class="chart-box">
+                    <div class="chart-label">Cache Hit Rate % &#8212; last 12 polls</div>
+                    <div class="bar-chart-h" id="ch-cache"></div>
+                </div>
+                <div class="chart-box">
+                    <div class="chart-label">Active Sessions &#8212; last 12 polls</div>
+                    <div class="bar-chart-h" id="ch-sess"></div>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-title">Order Status Breakdown</div>
+                    <div class="badge badge-cyan">LIVE</div>
+                </div>
+                <div class="breakdown-grid" id="breakdown-grid"></div>
+            </div>
+        </div><!-- /analytics -->
+
+
+        <!-- ═══════════════════════════════════════════ SETTINGS ═══ -->
+        <div class="tab-view" id="tab-settings">
+            <div class="settings-grid">
+
+                <div class="set-section">
+                    <div class="set-title">General</div>
+                    <div class="set-row">
+                        <div>
+                            <div class="set-key">Region</div>
+                            <div class="set-sub">Deployment region</div>
+                        </div>
+                        <select class="set-select">
+                            <option>ap-south-1</option>
+                            <option>us-east-1</option>
+                            <option>eu-west-2</option>
+                        </select>
+                    </div>
+                    <div class="set-row">
+                        <div>
+                            <div class="set-key">Dashboard Refresh</div>
+                            <div class="set-sub">Poll interval</div>
+                        </div>
+                        <select class="set-select" id="set-poll" onchange="changePoll()">
+                            <option value="1000">1 s</option>
+                            <option value="3000" selected>3 s</option>
+                            <option value="5000">5 s</option>
+                            <option value="10000">10 s</option>
+                        </select>
+                    </div>
+                    <div class="set-row">
+                        <div>
+                            <div class="set-key">Orders Per Page</div>
+                            <div class="set-sub">Max rows in tables</div>
+                        </div>
+                        <select class="set-select" id="set-limit">
+                            <option value="10" selected>10</option>
+                            <option value="25">25</option>
+                            <option value="50">50</option>
+                        </select>
+                    </div>
+                    <div class="set-row">
+                        <div class="set-key">Platform Uptime</div><span class="set-val" id="set-uptime">&#8212;</span>
+                    </div>
+                </div>
+
+                <div class="set-section">
+                    <div class="set-title">Notifications</div>
+                    <div class="set-row">
+                        <div>
+                            <div class="set-key">Critical Alerts Banner</div>
+                            <div class="set-sub">Red banner on system failure</div>
+                        </div>
+                        <div class="toggle on" id="tog-alerts" onclick="toggleSet('alerts')">
+                            <div class="toggle-thumb"></div>
+                        </div>
+                    </div>
+                    <div class="set-row">
+                        <div>
+                            <div class="set-key">Live Activity Feed</div>
+                            <div class="set-sub">Stream user events in sidebar</div>
+                        </div>
+                        <div class="toggle on" id="tog-feed" onclick="toggleSet('feed')">
+                            <div class="toggle-thumb"></div>
+                        </div>
+                    </div>
+                    <div class="set-row">
+                        <div>
+                            <div class="set-key">Recovery Notifications</div>
+                            <div class="set-sub">Banner when CCDT auto-heals</div>
+                        </div>
+                        <div class="toggle on" id="tog-recovery" onclick="toggleSet('recovery')">
+                            <div class="toggle-thumb"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="set-section">
+                    <div class="set-title">Database Connection</div>
+                    <div class="set-row">
+                        <div class="set-key">PostgreSQL Host</div><span class="set-val">demo-postgres:5432</span>
+                    </div>
+                    <div class="set-row">
+                        <div class="set-key">Database</div><span
+                            style="color:var(--text-secondary);font-size:11px">ccdt</span>
+                    </div>
+                    <div class="set-row">
+                        <div class="set-key">Connection Pool</div><span
+                            style="color:var(--text-secondary);font-size:11px">min 2 / max 10</span>
+                    </div>
+                    <div class="set-row">
+                        <div class="set-key">Redis Host</div><span class="set-val">demo-redis:6379</span>
+                    </div>
+                    <div class="set-row">
+                        <div class="set-key">Session TTL</div><span
+                            style="color:var(--text-secondary);font-size:11px">300 s</span>
+                    </div>
+                    <div style="margin-top:14px;display:flex;gap:8px">
+                        <button class="btn" onclick="testConn()">Test Connections</button>
+                        <button class="btn btn-warn" onclick="reseedInventory()">&#8635; Reseed Inventory</button>
+                    </div>
+                    <div id="conn-result"></div>
+                </div>
+
+                <div class="set-section">
+                    <div class="set-title">System Information</div>
+                    <div class="set-row">
+                        <div class="set-key">Mock API</div><span class="set-val">FastAPI 0.111 + asyncpg</span>
+                    </div>
+                    <div class="set-row">
+                        <div class="set-key">UI Build</div><span
+                            style="color:var(--text-secondary);font-size:11px">4.2.1-stable</span>
+                    </div>
+                    <div class="set-row">
+                        <div class="set-key">CCDT Brain</div><span style="color:var(--green);font-size:11px">&#9679;
+                            Connected (:3000)</span>
+                    </div>
+                    <div class="set-row">
+                        <div class="set-key">Co-Pilot</div><span style="color:var(--green);font-size:11px">&#9679;
+                            claude-sonnet-4</span>
+                    </div>
+                    <div class="set-row">
+                        <div class="set-key">Guardian Mode</div><span style="color:var(--green);font-size:11px">&#9679;
+                            Full-auto</span>
+                    </div>
+                    <div class="set-row">
+                        <div class="set-key">OPA Policies</div><span style="color:var(--green);font-size:11px">5 / 5
+                            active</span>
+                    </div>
+                </div>
+
+            </div>
+        </div><!-- /settings -->
+
+    </main>
+
+    <footer>
+        <div>NexaOps Cloud Platform &middot; Region: ap-south-1 &middot; Build: 4.2.1-stable</div>
+        <div class="footer-health">
+            <div class="h-item">
+                <div class="h-dot" id="hd-pg"></div><span id="hl-pg">PostgreSQL</span>
+            </div>
+            <div class="h-item">
+                <div class="h-dot" id="hd-rd"></div><span id="hl-rd">Redis</span>
+            </div>
+            <div class="h-item">
+                <div class="h-dot" id="hd-api"></div><span id="hl-api">API</span>
+            </div>
+            <span id="footer-time">&#8212;</span>
+        </div>
+    </footer>
+
+    <script>
+        /* ══════════════════════════════════════════════════════════════
+   CONFIG & STATE══════════════════════════════════════════════════════════════ */
+        let POLL_MS = 3000,
+            pollTimer = null;
+        let systemHealthy = true;
+        let feedItems = [],
+            allOrders = [],
+            currentInventory = [];
+        const startTime = Date.now();
+        const hist = {
+            qps: [],
+            lat: [],
+            cache: [],
+            sess: [],
+            rev: [],
+            ord: []
+        };
+        const cfg = {
+            alerts: true,
+            feed: true,
+            recovery: true
+        };
+
+        const INV_NAMES = {
+            'SKU-001': 'Compute Node v3',
+            'SKU-002': 'SSD Array 4TB',
+            'SKU-003': 'Network Switch',
+            'SKU-004': 'GPU Module H100',
+            'SKU-005': 'Memory DDR5 64GB',
+            'SKU-006': 'Power Supply 1kW',
+            'SKU-007': 'Cooling Unit',
+            'SKU-008': 'Fiber Transceiver',
+            'SKU-009': 'KVM Console',
+            'SKU-010': 'Rack PDU',
+            'SKU-011': 'UPS Module 10kVA',
+            'SKU-012': 'Backup Tape Drive'
+        };
+
+        const $ = id => document.getElementById(id);
+
+        /* ══════════════════════════════════════════════════════════════
+           TAB NAVIGATION══════════════════════════════════════════════════════════════ */
+        document.querySelectorAll('.nav-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const t = tab.dataset.tab;
+                document.querySelectorAll('.nav-tab').forEach(x => x.classList.remove('active'));
+                document.querySelectorAll('.tab-view').forEach(x => x.classList.remove('active'));
+                tab.classList.add('active');
+                $('tab-' + t).classList.add('active');
+                if (t === 'orders') refreshOrdersTab();
+                if (t === 'inventory') refreshInventoryTab();
+                if (t === 'analytics') refreshAnalyticsTab();
+            });
+        });
+
+        /* ══════════════════════════════════════════════════════════════
+           SPARK BARS (KPI cards)══════════════════════════════════════════════════════════════ */
+        function buildSpark(id, vals, color) {
+            const el = $(id);
+            if (!el) return;
+            el.innerHTML = '';
+            const max = Math.max(...vals, 1);
+            vals.forEach(v => {
+                const b = document.createElement('div');
+                b.className = 'bar';
+                b.style.cssText = `height:${Math.max(2, Math.round(v / max * 24))}px;background:${color}`;
+                el.appendChild(b);
+            });
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           BAR CHART (analytics)══════════════════════════════════════════════════════════════ */
+        function buildBarChart(id, vals, color, unit) {
+            const el = $(id);
+            if (!el || !vals.length) return;
+            const max = Math.max(...vals, 1);
+            el.innerHTML = vals.map((v, i) => {
+                const pct = Math.max(3, Math.round(v / max * 100));
+                return `<div class="bc-col">
+      <div class="bc-val" style="color:${color}">${Math.round(v)}${unit || ''}</div>
+      <div class="bc-bar" style="height:${pct}%;background:${color};opacity:.7"></div>
+      <div class="bc-lbl">${i + 1}</div>
+    </div>`;
+            }).join('');
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           ACTIVITY FEED══════════════════════════════════════════════════════════════ */
+        const FEED_ICONS = {
+            login: '&#8594;',
+            order: '&#10003;',
+            error: '&#10005;',
+            api: '&#9889;'
+        };
+        const FEED_CLS = {
+            login: 'fi-login',
+            order: 'fi-order',
+            error: 'fi-error',
+            api: 'fi-api'
+        };
+
+        function pushFeed(type, text) {
+            if (!cfg.feed) return;
+            feedItems.unshift({
+                type,
+                text,
+                time: new Date().toLocaleTimeString('en-US', {
+                    hour12: false
+                })
+            });
+            if (feedItems.length > 30) feedItems.pop();
+            $('feed-list').innerHTML = feedItems.map(f =>
+                `<div class="feed-item">
+       <div class="feed-icon ${FEED_CLS[f.type]||'fi-api'}">${FEED_ICONS[f.type]||'&middot;'}</div>
+       <div class="feed-body"><div class="feed-text">${f.text}</div><div class="feed-time">${f.time}</div></div>
+     </div>`
+            ).join('');
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           SYSTEM STATE══════════════════════════════════════════════════════════════ */
+        function setSystemState(state) {
+            $('sys-dot').className = 'status-dot' + (state !== 'healthy' ? ' ' + state : '');
+            $('crash-banner').style.display = (state !== 'healthy' && cfg.alerts) ? 'block' : 'none';
+            const msgs = {
+                healthy: 'All Systems Operational',
+                degraded: 'Service Degraded \u2014 Recovery in Progress',
+                critical: 'CRITICAL \u2014 System Failure'
+            };
+            $('sys-label').textContent = msgs[state] || msgs.critical;
+            $('hd-api').className = 'h-dot' + (state !== 'healthy' ? ' err' : '');
+            systemHealthy = state === 'healthy';
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           ORDERS PANEL (dashboard)══════════════════════════════════════════════════════════════ */
+        function ordersLoading() {
+            $('orders-spin').className = 'spin-wrap on';
+            $('orders-err').className = 'err-state';
+            $('orders-table').style.display = 'none';
+            $('orders-badge').textContent = 'LOADING\u2026';
+            $('orders-badge').className = 'badge badge-amber';
+        }
+
+        function ordersError() {
+            $('orders-spin').className = 'spin-wrap';
+            $('orders-err').className = 'err-state on';
+            $('orders-table').style.display = 'none';
+            $('orders-badge').textContent = 'ERROR';
+            $('orders-badge').className = 'badge badge-red';
+            $('kc-orders').classList.add('error');
+            $('kv-orders').classList.add('error');
+            $('kv-orders').textContent = 'ERR';
+        }
+
+        function ordersOk(rows) {
+            $('orders-spin').className = 'spin-wrap';
+            $('orders-err').className = 'err-state';
+            $('orders-table').style.display = '';
+            $('orders-badge').textContent = 'LIVE';
+            $('orders-badge').className = 'badge badge-green';
+            $('kc-orders').classList.remove('error');
+            $('kv-orders').classList.remove('error');
+            renderRows('orders-body', rows);
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           INVENTORY PANEL (dashboard)══════════════════════════════════════════════════════════════ */
+        function invLoading() {
+            $('inv-spin').className = 'spin-wrap on';
+            $('inv-err').className = 'err-state';
+            $('inv-grid').style.display = 'none';
+        }
+
+        function invError() {
+            $('inv-spin').className = 'spin-wrap';
+            $('inv-err').className = 'err-state on';
+            $('inv-grid').style.display = 'none';
+        }
+
+        function invOk(items) {
+            $('inv-spin').className = 'spin-wrap';
+            $('inv-err').className = 'err-state';
+            $('inv-grid').style.display = '';
+            $('inv-grid').innerHTML = items.map(it => {
+                const pct = Math.round(it.quantity / it.max_quantity * 100);
+                const cls = pct < 25 ? 'bar-low' : pct < 50 ? 'bar-mid' : 'bar-ok';
+                return `<div class="inv-cell">
+      <div class="inv-sku">${it.sku}</div>
+      <div class="inv-name">${INV_NAMES[it.sku] || it.sku}</div>
+      <div class="bar-track"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
+      <div class="inv-meta"><span>${it.quantity.toLocaleString()} units</span><span>${pct}%</span></div>
+    </div>`;
+            }).join('');
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           ROW RENDERER (shared by orders panel + orders tab)══════════════════════════════════════════════════════════════ */
+        function renderRows(tbodyId, rows) {
+            $(tbodyId).innerHTML = rows.map(r => {
+                const pc = r.status === 'fulfilled' ? 'pill-green' : r.status === 'pending' ? 'pill-amber' :
+                    'pill-red';
+                const ts = new Date(r.created_at).toLocaleTimeString('en-US', {
+                    hour12: false
+                });
+                return `<tr>
+      <td class="muted-text">#${r.order_id}</td>
+      <td>${r.customer_name}</td>
+      <td>${r.product_name}</td>
+      <td class="cyan-text">$${parseFloat(r.amount).toFixed(2)}</td>
+      <td><span class="pill ${pc}"><span class="dot"></span>${r.status}</span></td>
+      <td class="muted-text">${ts}</td>
+    </tr>`;
+            }).join('');
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           KPI UPDATE══════════════════════════════════════════════════════════════ */
+        function updateKPIs(d) {
+            $('kv-revenue').textContent = '$' + Number(d.revenue_24h).toLocaleString(undefined, {
+                maximumFractionDigits: 0
+            });
+            $('kd-revenue').textContent = '+' + (d.revenue_delta || 0).toFixed(1) + '% vs yesterday';
+            $('kv-orders').textContent = d.active_orders;
+            $('kd-orders').textContent = (d.pending_orders || 0) + ' pending';
+            $('kv-users').textContent = d.live_sessions;
+            $('kv-latency').textContent = d.avg_latency_ms + 'ms';
+            $('kd-latency').textContent = 'p95: ' + (d.p95_latency_ms || '\u2014') + 'ms';
+            $('mv-qps').textContent = d.db_qps || '\u2014';
+            $('mv-cache').textContent = (d.cache_hit_rate || '\u2014') + '%';
+            $('mv-errs').textContent = d.error_rate_5m || '0';
+
+            // History for sparks & analytics charts
+            const map = {
+                qps: d.db_qps,
+                lat: d.avg_latency_ms,
+                cache: d.cache_hit_rate,
+                sess: d.live_sessions,
+                rev: d.revenue_24h,
+                ord: d.active_orders
+            };
+            Object.keys(map).forEach(k => {
+                hist[k].push(Number(map[k] || 0));
+                if (hist[k].length > 12) hist[k].shift();
+            });
+
+            buildSpark('ks-revenue', hist.rev, 'var(--cyan)');
+            buildSpark('ks-orders', hist.ord, 'var(--amber)');
+            buildSpark('ks-users', hist.sess, 'var(--green)');
+            buildSpark('ks-latency', hist.lat, 'var(--cyan)');
+
+            // Analytics summary
+            $('an-rev').textContent = '$' + Number(d.revenue_24h).toLocaleString(undefined, {
+                maximumFractionDigits: 0
+            });
+            $('an-qps').textContent = (d.db_qps || 0) + '/s';
+            $('an-lat').textContent = (d.p95_latency_ms || d.avg_latency_ms) + 'ms';
+        }
+
+        function updateHealth(h) {
+            $('hd-pg').className = h.postgres ? 'h-dot' : 'h-dot err';
+            $('hl-pg').textContent = h.postgres ? 'PostgreSQL' : 'PostgreSQL \u2715';
+            $('hd-rd').className = h.redis ? 'h-dot' : 'h-dot err';
+            $('hl-rd').textContent = h.redis ? 'Redis' : 'Redis \u2715';
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           ORDERS TAB══════════════════════════════════════════════════════════════ */
+        function refreshOrdersTab() {
+            const f = allOrders.filter(r => r.status === 'fulfilled').length;
+            const p = allOrders.filter(r => r.status === 'pending').length;
+            const x = allOrders.filter(r => r.status === 'failed').length;
+            $('ot-total').textContent = allOrders.length;
+            $('ot-ful').textContent = f;
+            $('ot-pen').textContent = p;
+            $('ot-fail').textContent = x;
+            filterOrders();
+        }
+
+        function filterOrders() {
+            const st = $('of-status').value;
+            const sr = $('of-search').value.toLowerCase();
+            const filtered = allOrders.filter(r =>
+                (st === 'all' || r.status === st) &&
+                (!sr || r.customer_name.toLowerCase().includes(sr) || r.product_name.toLowerCase().includes(sr))
+            );
+            $('of-count').textContent = filtered.length + ' order' + (filtered.length !== 1 ? 's' : '');
+            renderRows('all-orders-body', filtered);
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           INVENTORY TAB══════════════════════════════════════════════════════════════ */
+        function refreshInventoryTab() {
+            if (!currentInventory.length) {
+                $('im-spin').className = 'spin-wrap on';
+                return;
+            }
+            $('im-spin').className = 'spin-wrap';
+            const total = currentInventory.reduce((s, i) => s + i.quantity, 0);
+            const low = currentInventory.filter(i => i.quantity / i.max_quantity < 0.25).length;
+            $('it-units').textContent = total.toLocaleString();
+            $('it-low').textContent = low;
+            $('it-updated').textContent = new Date().toLocaleTimeString('en-US', {
+                hour12: false
+            });
+            $('inv-mgmt-grid').innerHTML = currentInventory.map(it => {
+                const pct = Math.round(it.quantity / it.max_quantity * 100);
+                const [qCls, scCls, scTxt] =
+                pct < 15 ? ['iq-crit', 'sc-crit', 'CRITICAL'] :
+                    pct < 40 ? ['iq-low', 'sc-low', 'LOW'] : ['iq-ok', 'sc-ok', 'OK'];
+                const bCls = pct < 25 ? 'bar-low' : pct < 50 ? 'bar-mid' : 'bar-ok';
+                return `<div class="inv-card">
+      <div class="inv-card-top">
+        <div><div class="inv-sku-sm">${it.sku}</div><div class="inv-name-sm">${INV_NAMES[it.sku] || it.sku}</div></div>
+        <span class="status-chip ${scCls}">${scTxt}</span>
+      </div>
+      <div class="inv-qty-big ${qCls}">${it.quantity.toLocaleString()}</div>
+      <div class="bar-track"><div class="bar-fill ${bCls}" style="width:${pct}%"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted)">
+        <span>Max: ${it.max_quantity.toLocaleString()}</span><span>${pct}% stocked</span>
+      </div>
+    </div>`;
+            }).join('');
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           ANALYTICS TAB══════════════════════════════════════════════════════════════ */
+        function refreshAnalyticsTab() {
+            buildBarChart('ch-qps', hist.qps, 'var(--cyan)', '');
+            buildBarChart('ch-lat', hist.lat, 'var(--amber)', 'ms');
+            buildBarChart('ch-cache', hist.cache, 'var(--green)', '%');
+            buildBarChart('ch-sess', hist.sess, 'var(--purple)', '');
+            if (!allOrders.length) return;
+            const total = allOrders.length || 1;
+            const f = allOrders.filter(r => r.status === 'fulfilled').length;
+            const p = allOrders.filter(r => r.status === 'pending').length;
+            const x = allOrders.filter(r => r.status === 'failed').length;
+            $('breakdown-grid').innerHTML = [{
+                    label: 'Fulfilled',
+                    count: f,
+                    color: 'var(--green)'
+                },
+                {
+                    label: 'Pending',
+                    count: p,
+                    color: 'var(--amber)'
+                },
+                {
+                    label: 'Failed',
+                    count: x,
+                    color: 'var(--red)'
+                }
+            ].map(s =>
+                `<div class="bd-card">
+      <div class="bd-val" style="color:${s.color}">${s.count}</div>
+      <div class="bd-lbl">${s.label}</div>
+      <div class="bd-pct" style="color:${s.color}">${Math.round(s.count / total * 100)}%</div>
+    </div>`
+            ).join('');
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           SETTINGS ACTIONS══════════════════════════════════════════════════════════════ */
+        function toggleSet(k) {
+            cfg[k] = !cfg[k];
+            $('tog-' + k).className = cfg[k] ? 'toggle on' : 'toggle off';
+        }
+
+        function changePoll() {
+            POLL_MS = parseInt($('set-poll').value);
+            clearInterval(pollTimer);
+            pollTimer = setInterval(poll, POLL_MS);
+        }
+        async function testConn() {
+            const el = $('conn-result');
+            el.style.cssText = 'display:block;font-size:11px;margin-top:10px;color:var(--text-muted)';
+            el.textContent = 'Testing connections\u2026';
+            try {
+                const d = await (await fetch('/api/health')).json();
+                el.style.color = (d.postgres && d.redis) ? 'var(--green)' : 'var(--red)';
+                el.textContent = (d.postgres ? '\u2713 PostgreSQL' : '\u2715 PostgreSQL') +
+                    '  |  ' + (d.redis ? '\u2713 Redis' : '\u2715 Redis');
+            } catch (e) {
+                el.style.color = 'var(--red)';
+                el.textContent = 'Error: ' + e.message;
+            }
+        }
+        async function reseedInventory() {
+            if (!confirm('Reset all inventory quantities to healthy levels?')) return;
+            try {
+                const d = await (await fetch('/api/admin/reseed-inventory', {
+                    method: 'POST'
+                })).json();
+                if (d.ok) {
+                    pushFeed('api', '<strong>Admin</strong>: Inventory reseeded to healthy levels');
+                    alert('\u2713 Inventory reset successfully');
+                }
+            } catch (e) {
+                alert('Reseed failed: ' + e.message);
+            }
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           HELPERS══════════════════════════════════════════════════════════════ */
+        function fmtUptime(ms) {
+            const s = Math.floor(ms / 1000),
+                m = Math.floor(s / 60),
+                h = Math.floor(m / 60);
+            return h > 0 ? `${h}h ${m % 60}m` : m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
+        }
+
+        function rnd(arr) {
+            return arr[Math.floor(Math.random() * arr.length)];
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           MAIN POLL LOOP══════════════════════════════════════════════════════════════ */
+        async function poll() {
+            $('footer-time').textContent = new Date().toLocaleTimeString('en-US', {
+                hour12: false
+            });
+            if ($('set-uptime')) $('set-uptime').textContent = fmtUptime(Date.now() - startTime);
+
+            try {
+                /* 1. Health check */
+                const health = await (await fetch('/api/health')).json();
+                updateHealth(health);
+
+                const isDown = !health.postgres || !health.redis;
+                if (isDown) {
+                    if (systemHealthy) {
+                        setSystemState('degraded');
+                        pushFeed('error',
+                            '<strong>ALERT</strong>: Upstream service failure \u2014 database unreachable');
+                        pushFeed('error',
+                            '<strong>ERROR 502</strong>: Connection refused \u2014 max retries exhausted');
+                    }
+                    ordersLoading();
+                    invLoading();
+                    return;
+                }
+                if (!systemHealthy) {
+                    setSystemState('healthy');
+                    if (cfg.recovery) pushFeed('login',
+                        '<strong>RECOVERY</strong>: Services restored \u2014 resuming normal operation');
+                }
+
+                /* 2. Dashboard stats */
+                const dash = await (await fetch('/api/dashboard')).json();
+                updateKPIs(dash);
+                if (dash.session_id) $('session-id').querySelector('span').textContent = dash.session_id.slice(0,
+                    8) + '\u2026';
+
+                /* 3. Orders */
+                const limit = parseInt($('set-limit') ? $('set-limit').value : 10) || 10;
+                const oRes = await fetch('/api/orders?limit=' + limit);
+                if (!oRes.ok) {
+                    ordersError();
+                    pushFeed('error', '<strong>502</strong>: Orders endpoint timeout');
+                } else {
+                    const o = await oRes.json();
+                    allOrders = o.rows || [];
+                    ordersOk(allOrders);
+                    if (o.new_order) {
+                        const x = o.new_order;
+                        pushFeed('order',
+                            `<strong>${x.customer_name}</strong> placed order #${x.order_id} \u2014 $${parseFloat(x.amount).toFixed(2)}`
+                        );
+                    }
+                }
+
+                /* 4. Inventory */
+                const iRes = await fetch('/api/inventory');
+                if (!iRes.ok) {
+                    invError();
+                    pushFeed('error', '<strong>503</strong>: Inventory DB query failed');
+                } else {
+                    const i = await iRes.json();
+                    currentInventory = i.items || [];
+                    invOk(currentInventory);
+                }
+
+                /* 5. Refresh active non-dashboard tab */
+                const activeTab = document.querySelector('.nav-tab.active') ? .dataset.tab;
+                if (activeTab === 'orders') refreshOrdersTab();
+                if (activeTab === 'inventory') refreshInventoryTab();
+                if (activeTab === 'analytics') refreshAnalyticsTab();
+
+                /* 6. Random feed events */
+                if (cfg.feed) {
+                    if (Math.random() < 0.6) {
+                        const users = ['alice@corp.io', 'bob@tech.co', 'carol@ops.ai', 'dave@nexaops.io',
+                            'erin@saas.com'
+                        ];
+                        const pages = ['/dashboard', '/orders', '/inventory', '/analytics', '/settings'];
+                        pushFeed('login', `<strong>${rnd(users)}</strong> navigated to ${rnd(pages)}`);
+                    }
+                    if (Math.random() < 0.3) {
+                        const acts = ['exported CSV report', 'updated stock threshold', 'approved purchase order',
+                            'ran analytics query'
+                        ];
+                        pushFeed('api', `API call: <strong>${rnd(acts)}</strong>`);
+                    }
+                }
+
+            } catch (err) {
+                setSystemState('critical');
+                ordersError();
+                invError();
+                updateHealth({
+                    postgres: false,
+                    redis: false
+                });
+                pushFeed('error', `<strong>FATAL</strong>: ${err.message || 'Backend unreachable'}`);
+            }
+        }
+
+        /* ══════════════════════════════════════════════════════════════
+           INIT══════════════════════════════════════════════════════════════ */
+        ordersLoading();
+        invLoading();
+        pushFeed('login', '<strong>admin@nexaops.io</strong> authenticated \u2014 session started');
+        pushFeed('api', '<strong>System</strong>: All services nominal \u2014 100 user sessions active');
+        poll();
+        pollTimer = setInterval(poll, POLL_MS);
+    </script>
+</body>
+
+</html>
