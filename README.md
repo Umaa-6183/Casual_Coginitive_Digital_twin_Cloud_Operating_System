@@ -308,6 +308,10 @@ make train-gnn    # ~2 min — GNN model
 make train-rl     # ~60 min — RL Guardian agent
 
 # 6. Start the full stack
+docker compose -f docker-compose.yml -f docker-compose.facade.yml down
+
+docker compose -f docker-compose.yml -f docker-compose.facade.yml up -d --build
+
 docker compose up -d
 
 # 7. Verify all services healthy

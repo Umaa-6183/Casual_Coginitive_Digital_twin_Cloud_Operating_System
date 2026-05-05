@@ -1,5 +1,5 @@
 """
-CCDT Business Facade — Mock API Backend (v2 Final)
+CCDT Business Facade — Mock API Backend (v2 Final — Fixed)
 ================================================================================
 Connects the NexaOps SaaS Portal (Screen 1) to:
   • demo-postgres  — internal Docker port 5432
@@ -100,7 +100,7 @@ async def lifespan(app: FastAPI):
         await redis_client.aclose()
 
 
-app = FastAPI(title="CCDT Mock API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="CCDT Mock API", version="2.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -205,6 +205,17 @@ async def _seed_orders(conn: asyncpg.Connection) -> None:
     )
 
 
+# ── Helpers ────────────────────────────────────────────────────────────────────
+def _pg_ok() -> bool:
+    """Return True if pg_pool is initialised and presumably healthy."""
+    return pg_pool is not None
+
+
+def _redis_ok() -> bool:
+    """Return True if redis_client is initialised."""
+    return redis_client is not None
+
+
 # ── GET /api/health ────────────────────────────────────────────────────────────
 @app.get("/api/health")
 async def health() -> dict:
@@ -212,7 +223,7 @@ async def health() -> dict:
               "ts": datetime.utcnow().isoformat()}
 
     try:
-        if pg_pool:
+        if _pg_ok():
             async with pg_pool.acquire() as conn:
                 await conn.fetchval("SELECT 1")
             result["postgres"] = True
@@ -220,7 +231,7 @@ async def health() -> dict:
         log.error("PG health: %s", exc)
 
     try:
-        if redis_client:
+        if _redis_ok():
             await redis_client.ping()
             result["redis"] = True
     except Exception as exc:
@@ -232,24 +243,30 @@ async def health() -> dict:
 # ── GET /api/dashboard ─────────────────────────────────────────────────────────
 @app.get("/api/dashboard")
 async def dashboard() -> dict:
+    if not _pg_ok():
+        raise HTTPException(
+            status_code=503, detail="Database pool not initialised")
+
     try:
-        # ── Redis session / cache metrics ──────────────────────────────────────
+        # ── Redis session / cache metrics (graceful degradation) ───────────────
         session_id = str(uuid.uuid4())
         live_sessions = random.randint(80, 120)   # fallback if Redis is down
         cache_hit_rate = 0.0
 
-        try:
-            await redis_client.setex(f"session:{session_id}", 300, "active")
-            _cur, keys = await redis_client.scan(0, match="session:*", count=500)
-            live_sessions = max(len(keys), 1)
-            await redis_client.incr("cache:total")
-            if random.random() < 0.87:
-                await redis_client.incr("cache:hits")
-            hits = int(await redis_client.get("cache:hits") or 0)
-            total = int(await redis_client.get("cache:total") or 1)
-            cache_hit_rate = round((hits / max(total, 1)) * 100, 1)
-        except Exception:
-            pass   # Redis down — UI will reflect this via /api/health
+        if _redis_ok():
+            try:
+                await redis_client.setex(f"session:{session_id}", 300, "active")
+                _cur, keys = await redis_client.scan(0, match="session:*", count=500)
+                live_sessions = max(len(keys), 1)
+                await redis_client.incr("cache:total")
+                if random.random() < 0.87:
+                    await redis_client.incr("cache:hits")
+                hits = int(await redis_client.get("cache:hits") or 0)
+                total = int(await redis_client.get("cache:total") or 1)
+                cache_hit_rate = round((hits / max(total, 1)) * 100, 1)
+            except Exception as redis_exc:
+                log.warning("Redis metrics skipped: %s", redis_exc)
+                # Redis is down — continue with defaults; /api/health will show it
 
         # ── PostgreSQL queries ─────────────────────────────────────────────────
         async with pg_pool.acquire() as conn:
@@ -303,6 +320,10 @@ async def dashboard() -> dict:
 # ── GET /api/orders ────────────────────────────────────────────────────────────
 @app.get("/api/orders")
 async def orders(limit: int = Query(default=10, le=50)) -> dict:
+    if not _pg_ok():
+        raise HTTPException(
+            status_code=503, detail="Database pool not initialised")
+
     try:
         async with pg_pool.acquire() as conn:
             rows = await conn.fetch(
@@ -351,6 +372,10 @@ async def orders(limit: int = Query(default=10, le=50)) -> dict:
 # ── GET /api/inventory ─────────────────────────────────────────────────────────
 @app.get("/api/inventory")
 async def inventory() -> dict:
+    if not _pg_ok():
+        raise HTTPException(
+            status_code=503, detail="Database pool not initialised")
+
     try:
         async with pg_pool.acquire() as conn:
             rows = await conn.fetch(
@@ -365,16 +390,13 @@ async def inventory() -> dict:
 
                 # Realistic stock movement: low stock triggers restocking
                 if pct < 0.15:
-                    # Critical — always restock a large batch
                     delta = random.randint(
                         int(max_qty * 0.25), int(max_qty * 0.45))
                 elif pct < 0.40:
-                    # Getting low — 70% chance restock, 30% sell a little
                     delta = (random.randint(10, 40)
                              if random.random() < 0.70
                              else random.randint(-2, -1))
                 else:
-                    # Normal — 35% small restock, 65% sell a few
                     delta = (random.randint(1, 8)
                              if random.random() < 0.35
                              else random.randint(-4, -1))
@@ -402,6 +424,9 @@ async def inventory() -> dict:
 @app.post("/api/login")
 async def login(body: dict) -> dict:
     username = body.get("username", "guest")
+    if not _redis_ok():
+        raise HTTPException(
+            status_code=503, detail="Session store unavailable")
     try:
         sid = str(uuid.uuid4())
         await redis_client.setex(f"session:{sid}", 1800, username)
@@ -418,7 +443,7 @@ async def login(body: dict) -> dict:
 async def logout(body: dict) -> dict:
     sid = body.get("session_id", "")
     try:
-        if sid:
+        if sid and _redis_ok():
             await redis_client.delete(f"session:{sid}")
         return {"ok": True}
     except Exception:
@@ -430,10 +455,11 @@ async def logout(body: dict) -> dict:
 async def reseed_inventory() -> dict:
     """
     Resets all inventory quantities to healthy seed levels.
-    Use this if stock drains to 0 during a long demo session:
-
-        curl -X POST http://localhost:8088/api/admin/reseed-inventory
+    Use this if stock drains to 0 during a long demo session.
     """
+    if not _pg_ok():
+        raise HTTPException(
+            status_code=503, detail="Database pool not initialised")
     try:
         async with pg_pool.acquire() as conn:
             await conn.execute("DELETE FROM mock_inventory")
