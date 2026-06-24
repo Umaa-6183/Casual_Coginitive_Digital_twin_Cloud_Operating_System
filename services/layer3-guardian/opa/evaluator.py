@@ -137,7 +137,7 @@ def build_action_input(
             "autonomy_mode":  "supervised",
             "user":           "ccdt-guardian",
             "rbac_subject":   "ccdt-guardian",
-            "can_write_ns":   ["default", "production", "ccdt"],
+            "can_write_ns":   ["default", "production", "ccdt", "demo-app"],
             "human_approved": False,
             **(context or {}),
         },
@@ -536,6 +536,14 @@ class LocalFallbackEvaluator:
         # Non-memory actions pass through
         if name not in {"increase_oom_threshold", "restart_pod", "drain_node"}:
             return True, [], []
+
+        # restart_pod is SAFE for stateful workloads during OOM scenarios
+        # Allow autonomous restart without human approval
+        if name == "restart_pod":
+            if is_stateful and oom_kills >= 1 and oom_kills < 5:
+                # Autonomous restart is allowed for moderate OOM scenarios
+                return True, [], flags
+            # Fall through to normal checks for non-stateful or storm scenarios
 
         if name == "increase_oom_threshold":
             if oom_kills < 1:

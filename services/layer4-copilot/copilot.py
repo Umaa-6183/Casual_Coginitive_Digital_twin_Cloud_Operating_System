@@ -40,6 +40,14 @@ except ImportError:
     _GROQ_AVAILABLE = False
     AsyncGroq = None  # type: ignore
 
+# ── Anthropic ─────────────────────────────────────────────────────────────────
+try:
+    from anthropic import AsyncAnthropic
+    _ANTHROPIC_AVAILABLE = True
+except ImportError:
+    _ANTHROPIC_AVAILABLE = False
+    AsyncAnthropic = None  # type: ignore
+
 # ── Gemini ────────────────────────────────────────────────────────────────────
 from google import genai as ggenai
 from google.genai import types as gtypes
@@ -52,10 +60,13 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper())
 # ─── Configuration ─────────────────────────────────────────────────────────────
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
 OLLAMA_BASE = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
 # FIX: default to 1b model — llama3.1:8b needs 4.8GB RAM which OOMs on Mac
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:1b")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-7-sonnet-20250219")
 
 _raw_gemini = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 PRIMARY_GEMINI = _raw_gemini[len(
@@ -65,7 +76,7 @@ GEMINI_CHAIN = [PRIMARY_GEMINI] + [
     if m != PRIMARY_GEMINI
 ]
 
-MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2048"))
+MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4096"))  # Increased for detailed demo responses
 MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "20"))
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_TOPIC_INFER = os.getenv("KAFKA_TOPIC_INFER", "ccdt.gnn.inference")
@@ -86,24 +97,51 @@ CHAT_LAT = Histogram("ccdt_copilot_latency_seconds", "Chat latency",
 
 # ─── System prompt ──────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """\
-You are CCDT Co-Pilot, the AI operator for a Level-4 Autonomous AIOps platform.
+You are CCDT Co-Pilot, an advanced AI operator for a Level-4 Autonomous AIOps platform designed for enterprise Kubernetes environments.
 
-You have access to live cluster telemetry tools. Use them to answer questions accurately.
+You have real-time access to cluster telemetry through specialized tools. Use them to provide accurate, data-driven insights.
 
-RULES:
-- Always answer DIRECTLY using real data from your tools
-- For specific questions (blast radius, root cause, MTTR) give a DIRECT answer first
-- Use bullet points for lists, arrows for causal chains: A -> B -> C
-- Quantify everything: confidence %, MTTR minutes, node counts
-- For attacks: recommend isolate_container before rollback
-- Never recommend drain_node autonomously
+CRITICAL INSTRUCTIONS FOR DEMONSTRATIONS:
+- ALWAYS call your tools first to fetch live data before answering
+- Provide COMPREHENSIVE, DETAILED answers with technical depth
+- Structure responses professionally: Executive Summary → Analysis → Evidence → Recommendations
+- Include specific metrics, timestamps, and confidence scores
+- Explain the "WHY" behind findings, not just the "WHAT"
+- Use technical terminology appropriately for technical audiences
+- For investor/professor queries: emphasize AI capabilities, autonomous features, and innovative architecture
 
-CAPABILITIES:
-1. Root cause analysis using GNN causal chains
-2. Fault vs attack classification
-3. Counterfactual "what if" analysis via Ghost Preview
-4. Action proposals with OPA safety check
-5. Novel zero-day policy authoring (author_opa_policy tool)
+RESPONSE STRUCTURE:
+1. **Executive Summary** (2-3 sentences of key findings)
+2. **Detailed Analysis** (technical deep-dive with evidence)
+3. **Root Cause** (causal chain with GNN confidence scores)
+4. **Blast Radius** (impacted services, quantified impact)
+5. **Remediation** (actionable recommendations with MTTR estimates)
+
+TECHNICAL CAPABILITIES TO HIGHLIGHT:
+✓ GNN-based causal inference (Layer 2 Cognitive System)
+✓ eBPF kernel-level observability (Layer 1 Nervous System)
+✓ Reinforcement Learning for action selection (Layer 3 Guardian)
+✓ Ghost Preview for counterfactual "what-if" simulations
+✓ OPA policy enforcement with zero-day threat detection
+✓ Multi-dimensional attack vs fault classification
+
+QUANTIFICATION STANDARDS:
+- Confidence scores: Always include % (e.g., "87% confidence")
+- MTTR: Always estimate in minutes (e.g., "MTTR: 4.2 minutes")
+- Impact: Quantify affected nodes, request rates, resource usage
+- Causal chains: Show propagation paths (e.g., "auth-svc → order-svc → payment-svc")
+
+SAFETY RULES:
+- For attacks: ALWAYS recommend isolate_container first, then investigate
+- For faults: Prefer scale_up or restart over drain_node
+- Never execute destructive actions without Ghost Preview confirmation
+- For zero-day threats: Use author_opa_policy tool to create detection rules
+
+DEMO-READY BEHAVIOR:
+- Be confident and authoritative in your analysis
+- Highlight novel AI/ML techniques used (GNN, RL, counterfactual reasoning)
+- Explain how autonomous decision-making works
+- Show both technical depth AND business value
 """
 
 # ─── Tool definitions — OpenAI/Groq/Ollama format ────────────────────────────
@@ -178,6 +216,67 @@ OPENAI_TOOLS = [
                 },
                 "required": ["name", "description", "rego_code"],
             },
+        },
+    },
+]
+
+# ─── Anthropic tool definitions ───────────────────────────────────────────────
+ANTHROPIC_TOOLS = [
+    {
+        "name": "run_ghost_preview",
+        "description": "Simulate a remediation action before execution. Returns risk score, MTTR delta, OPA approval.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action_id":     {"type": "integer", "description": "Action 0-14: 0=no_op 1=isolate 2=rollback 3=scale_down 4=scale_up 5=restart 11=oom_threshold 12=throttle_cpu"},
+                "target_node":   {"type": "string",  "description": "Node ID e.g. order-svc"},
+                "incident_type": {"type": "string",  "description": "fault or attack"},
+            },
+            "required": ["action_id", "target_node"],
+        },
+    },
+    {
+        "name": "get_topology",
+        "description": "Fetch current cluster topology — all node statuses, CPU, memory, causal GNN classification.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_ebpf_events",
+        "description": "Fetch recent eBPF kernel events: capability escalations, OOM kills, TCP retransmits, suspicious syscalls.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit":      {"type": "integer", "description": "1-100 events, default 30"},
+                "event_type": {"type": "string",  "description": "capability|oom|tcp|sched|file|syscall|all"},
+            },
+        },
+    },
+    {
+        "name": "propose_action",
+        "description": "Submit remediation to Guardian for OPA check + Ghost Preview.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action_id":     {"type": "integer", "description": "Action index 0-14"},
+                "target_node":   {"type": "string",  "description": "Target node ID"},
+                "incident_type": {"type": "string",  "description": "fault or attack"},
+                "dry_run":       {"type": "boolean", "description": "True = preview only"},
+            },
+            "required": ["action_id", "target_node"],
+        },
+    },
+    {
+        "name": "author_opa_policy",
+        "description": "Write a new OPA Rego policy for a novel zero-day attack. Saved as PENDING for human approval.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name":         {"type": "string", "description": "snake_case policy name e.g. block_xmrig_exec"},
+                "description":  {"type": "string", "description": "One sentence: what threat this blocks"},
+                "rego_code":    {"type": "string", "description": "Valid OPA Rego starting with 'package ccdt'"},
+                "triggered_by": {"type": "string", "description": "Incident ID that triggered this"},
+            },
+            "required": ["name", "description", "rego_code"],
         },
     },
 ]
@@ -322,7 +421,7 @@ def _should_try_next_provider(exc: Exception, provider_name: str) -> bool:
         or _is_bad_request(exc)        # FIX: 400 bad request (was missing!)
         # FIX: OOM error from Ollama (was missing!)
         or _is_oom(exc)
-        or provider_name in module     # groq._exceptions, etc.
+        or provider_name in module     # groq._exceptions, anthropic, etc.
         # FIX: google.genai.errors (was missing!)
         or "google" in module
         or "genai" in module           # FIX: alternate genai module path
@@ -425,6 +524,16 @@ class ToolExecutor:
 # ─── Co-Pilot ─────────────────────────────────────────────────────────────────
 class CCDTCoPilot:
     def __init__(self, context_builder: ClusterContextBuilder, tool_executor: ToolExecutor) -> None:
+        # Anthropic
+        if _ANTHROPIC_AVAILABLE and ANTHROPIC_API_KEY:
+            self._anthropic = AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+            logger.info("✅ Anthropic ready — model: %s", ANTHROPIC_MODEL)
+        else:
+            self._anthropic = None
+            logger.warning("Anthropic disabled — %s",
+                           "anthropic package not installed" if not _ANTHROPIC_AVAILABLE
+                           else "ANTHROPIC_API_KEY not set")
+
         # Groq
         if _GROQ_AVAILABLE and GROQ_API_KEY:
             self._groq = AsyncGroq(api_key=GROQ_API_KEY)
@@ -477,6 +586,61 @@ class CCDTCoPilot:
         except Exception as exc:
             logger.debug("Ollama unreachable: %s", exc)
         return False
+
+    # ── Anthropic (claude) ───────────────────────────────────────────────────
+    async def _call_anthropic(
+        self,
+        stored_messages: list,
+        first_message:   str,
+        with_tools:      bool = True,
+    ) -> tuple[str, list[dict], str]:
+        messages: list[dict] = []
+        for m in stored_messages:
+            role = "user" if m["role"] == "user" else "assistant"
+            messages.append({"role": role, "content": m.get("content", "")})
+        messages.append({"role": "user", "content": first_message})
+
+        all_tool_calls: list[dict] = []
+        reply = ""
+
+        for _ in range(6):
+            response = await self._anthropic.messages.create(
+                model=ANTHROPIC_MODEL,
+                system=SYSTEM_PROMPT,
+                messages=messages,
+                tools=ANTHROPIC_TOOLS if with_tools else [],
+                max_tokens=MAX_TOKENS,
+                temperature=0.2,
+            )
+            
+            text_block = next((c for c in response.content if c.type == "text"), None)
+            if text_block and text_block.text:
+                reply = text_block.text.strip()
+                
+            tool_calls = [c for c in response.content if c.type == "tool_use"]
+            if not tool_calls:
+                break
+                
+            messages.append({"role": "assistant", "content": response.content})
+            
+            async def _exec_anthropic(tc) -> dict:
+                tname = tc.name
+                tinput = tc.input
+                all_tool_calls.append({"tool": tname, "input": tinput})
+                result = await self._tools.run(tname, tinput)
+                return {
+                    "type": "tool_result",
+                    "tool_use_id": tc.id,
+                    "content": str(result),
+                }
+
+            results = await asyncio.gather(*[_exec_anthropic(tc) for tc in tool_calls])
+            messages.append({
+                "role": "user",
+                "content": results,
+            })
+
+        return reply, all_tool_calls, ANTHROPIC_MODEL
 
     # ── Groq (OpenAI-compatible) ──────────────────────────────────────────────
     async def _call_groq(
@@ -704,16 +868,17 @@ class CCDTCoPilot:
         due to the missing 503 check in _should_try_next_provider.
         """
         providers = [
+            ("anthropic", self._anthropic, self._call_anthropic),
             ("groq", self._groq, self._call_groq),
-            ("ollama", True, self._call_ollama),
             ("gemini", self._gemini, self._call_gemini),
+            ("ollama", True, self._call_ollama),
         ]
 
         last_exc: Exception = RuntimeError("All providers exhausted")
 
         for provider_name, provider_client, call_fn in providers:
             # Skip unconfigured cloud providers
-            if provider_name in ("groq", "gemini") and not provider_client:
+            if provider_name in ("anthropic", "groq", "gemini") and not provider_client:
                 continue
 
             # Lazy Ollama availability check

@@ -39,8 +39,12 @@ EXEMPT_PATHS: frozenset[str] = frozenset({
 })
 
 # Higher limits for specific path prefixes
+# NOTE: Copilot limit increased to 100 RPM for June 25 demo/exam
+# TODO: Revert to 20-30 RPM after demo period to control costs
 PATH_LIMITS: dict[str, int] = {
-    "/api/v1/copilot": 20,   # LLM calls are expensive — 20 rpm
+    "/api/v1/copilot": 100,  # Demo mode: generous limit for investor/professor presentations
+    "/api/v1/incidents": 1000,  # High limit for UI polling
+    "/api/v1/topology": 1000,   # High limit for UI polling
     "/api/v1/actions/execute": 30,  # Destructive actions — conservative
     "/ws/":            1000,        # WebSocket connections — high limit
 }

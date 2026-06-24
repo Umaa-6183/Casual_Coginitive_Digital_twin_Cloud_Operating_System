@@ -8,6 +8,8 @@
 google-genai>=1.0.0
 
 # ── AI providers ───────────────────────────────────────────────────────────────
+anthropic>=0.40.0
+
 # Primary: Groq — fast, generous free tier (500 RPM)
 # Get free key: https://console.groq.com
 groq>=0.9.0

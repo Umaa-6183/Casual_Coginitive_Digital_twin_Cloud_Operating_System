@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useClusterStore } from '@/stores/useClusterStore';
+import { useTopology } from '@/hooks/useTopology';
 import { TopologyMap }     from './TopologyMap';
 import { NodeCard }        from './NodeCard';
 import { GhostPreviewModal } from '@/components/ghost/GhostPreviewModal';
 import { GlowBadge }       from '@/components/shared/GlowBadge';
 import type { GhostAction } from '@/types';
-import { Zap, Brain, Shield, MessageSquare } from "lucide-react";
+import { Zap, Brain, Shield, MessageSquare, Settings } from "lucide-react";
 
 const LAYER_HEALTH = [
   {
@@ -39,8 +40,24 @@ const LAYER_HEALTH = [
 ];
 
 export const TopologyTab: React.FC = () => {
-  const { nodes, edges, alerts, selectedNode, selectNode } = useClusterStore();
+  const { nodes, edges, alerts, selectedNode, selectNode, setNodes, setEdges } = useClusterStore();
+  const { data: topologyData, loading, error } = useTopology();
   const [ghostAction, setGhostAction] = useState<GhostAction | null>(null);
+
+  // Sync backend topology data to local store
+  useEffect(() => {
+    if (topologyData && topologyData.nodes.length > 0) {
+      setNodes(topologyData.nodes);
+      setEdges(topologyData.edges);
+      
+      // Refresh selectedNode with latest data so side panel stays current
+      const currentSel = useClusterStore.getState().selectedNode;
+      if (currentSel) {
+        const updated = topologyData.nodes.find(n => n.id === currentSel.id);
+        if (updated) selectNode(updated);
+      }
+    }
+  }, [topologyData, setNodes, setEdges, selectNode]);
 
   const criticals = nodes.filter(n => n.status === 'critical').length;
   const warnings  = nodes.filter(n => n.status === 'warning').length;

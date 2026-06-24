@@ -1,5 +1,5 @@
-import React from 'react';
-import { useIncidentStore } from '@/stores/useIncidentStore';
+import React, { useState } from 'react';
+import { useIncidents } from '@/hooks/useIncidents';
 import { GlowBadge }        from '@/components/shared/GlowBadge';
 import { MetricBar }        from '@/components/shared/MetricBar';
 import {
@@ -12,6 +12,7 @@ import {
   Zap,
   TrendingDown,
   Clock,
+  Settings,
 } from "lucide-react";
 
 import type { Incident, IncidentStatus } from '@/types';
@@ -384,11 +385,18 @@ function IncidentDetail({ inc }: { inc: Incident }) {
 }
 
 export const IncidentsTab: React.FC = () => {
-  const { incidents, selected, setSelected, statusFilter, setFilter } = useIncidentStore();
+  const [statusFilter, setFilter] = useState('all');
+  const [selected, setSelected] = useState<Incident | null>(null);
+  const { incidents, loading, error } = useIncidents(statusFilter);
 
-  const filtered = incidents.filter(
-    inc => statusFilter === 'all' || inc.status === statusFilter,
-  );
+  // Filter out seed incidents when real data exists
+  const filteredIncidents = incidents.filter(inc => {
+    // If we have more than one incident and this is the seed, skip it
+    if (incidents.length > 1 && inc.id === "INC-2999") {
+      return false;
+    }
+    return true;
+  });
 
   return (
     <div style={{ height: '100%', display: 'flex', overflow: 'hidden' }}>
@@ -418,14 +426,29 @@ export const IncidentsTab: React.FC = () => {
 
         {/* List */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px' }}>
-          {filtered.map(inc => (
-            <IncidentListItem
-              key={inc.id}
-              inc={inc}
-              selected={selected?.id === inc.id}
-              onClick={() => setSelected(inc)}
-            />
-          ))}
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: 20, color: '#4A6A8A' }}>
+              <Settings size={24} color="#22D3EE" style={{ animation: 'spin 1s linear infinite' }} />
+              <div style={{ marginTop: 8, fontSize: 11 }}>Loading incidents…</div>
+            </div>
+          ) : error ? (
+            <div style={{ textAlign: 'center', padding: 20, color: '#FF3B5C', fontSize: 11 }}>
+              Error: {error}
+            </div>
+          ) : filteredIncidents.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 20, color: '#4A6A8A', fontSize: 11 }}>
+              {statusFilter === 'all' ? 'No incidents found' : `No ${statusFilter} incidents`}
+            </div>
+          ) : (
+            filteredIncidents.map(inc => (
+              <IncidentListItem
+                key={inc.id}
+                inc={inc}
+                selected={selected?.id === inc.id}
+                onClick={() => setSelected(inc)}
+              />
+            ))
+          )}
         </div>
       </div>
 

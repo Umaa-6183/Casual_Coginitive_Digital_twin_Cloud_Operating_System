@@ -1,0 +1,148 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    CCDT - Quick Command Reference                            ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+━━━ DEPLOYMENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Start all services
+docker-compose up -d
+
+# Restart Layer-2 (apply GNN fix)
+docker-compose restart layer2-cognitive
+
+# Check service status
+docker-compose ps
+
+# Stop all services
+docker-compose down
+
+━━━ TESTING ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Run all tests (30+ checks)
+./RUN_ALL_TESTS.sh
+
+# Test GNN classification
+./test_gnn_classification.sh
+
+# Test end-to-end recovery
+./test_end_to_end.sh
+
+# Test Docker restart
+./test_recovery.sh
+
+━━━ MONITORING ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Watch Guardian recovery actions
+docker logs -f ccdt-layer3-guardian-1 | grep -E "RESTART|✅|⚡"
+
+# Watch Layer-2 classification
+docker logs -f ccdt-layer2-cognitive-1 | grep "🔍 Classification"
+
+# Check GNN inference
+curl -s http://localhost:8001/infer | jq '.'
+
+# Check Guardian status
+curl -s http://localhost:8002/actions/history | jq '.'
+
+# Verify container restart
+docker inspect ccdt-demo-postgres-1 --format='{{.State.StartedAt}}'
+
+━━━ DEBUGGING ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Check Layer-2 logs
+docker logs ccdt-layer2-cognitive-1 --tail 50
+
+# Check Guardian logs
+docker logs ccdt-layer3-guardian-1 --tail 50
+
+# Check all service logs
+docker-compose logs --tail=50
+
+# Verify classification code loaded
+docker exec ccdt-layer2-cognitive-1 grep -n "_classify_incident_type" /app/inference/server.py
+
+# Check Docker socket access
+docker exec ccdt-layer3-guardian-1 ls -la /var/run/docker.sock
+
+# Test Docker API access
+docker exec ccdt-layer3-guardian-1 python3 -c "import docker; print(docker.from_env().ping())"
+
+━━━ API ENDPOINTS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Layer-2 GNN
+curl -s http://localhost:8001/health
+curl -s http://localhost:8001/ready
+curl -s http://localhost:8001/infer
+curl -s http://localhost:8001/topology
+curl -s http://localhost:8001/debug/state
+
+# Layer-3 Guardian
+curl -s http://localhost:8002/health
+curl -s http://localhost:8002/ready
+curl -s http://localhost:8002/actions/history
+curl -s http://localhost:8002/actions/pending
+curl -s http://localhost:8002/metrics
+
+# OPA
+curl -s http://localhost:8181/health
+
+━━━ ROLLBACK ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Revert code changes
+git checkout services/layer2-cognitive/inference/server.py
+
+# Restart Layer-2
+docker-compose restart layer2-cognitive
+
+# Verify rollback
+docker logs ccdt-layer2-cognitive-1 | grep -c "Classification override"
+# Should output: 0 (no matches = reverted)
+
+━━━ USEFUL CHECKS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Count successful restarts
+docker logs ccdt-layer3-guardian-1 | grep -c "✅ RESTART COMPLETED"
+
+# Show recent recovery events
+docker logs ccdt-layer3-guardian-1 | grep "RESTART" | tail -10
+
+# Check container restart count
+docker inspect ccdt-demo-postgres-1 --format='{{.RestartCount}}'
+
+# Get current incident type
+curl -s http://localhost:8001/infer | jq -r '.incidentType'
+
+# Get root cause node
+curl -s http://localhost:8001/infer | jq -r '.rootCauseNode'
+
+# Get root cause confidence
+curl -s http://localhost:8001/infer | jq -r '.rootCauseConfidence'
+
+━━━ DOCUMENTATION ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+README_FIXES.md           - Start here (documentation index)
+ALL_BUGS_FIXED.md         - Complete bug inventory
+RECOVERY_FIX_COMPLETE.md  - Executive summary
+GNN_CLASSIFICATION_FIX.md - Technical implementation
+DEPLOYMENT_GUIDE.md       - Operations guide
+QUICK_START.md            - Quick reference
+FINAL_SUMMARY.md          - Final summary
+
+━━━ TEST SCRIPTS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+RUN_ALL_TESTS.sh           - Comprehensive test suite (30+ tests)
+test_gnn_classification.sh - Classification validation
+test_recovery.sh           - Docker restart test
+test_end_to_end.sh         - Full pipeline test
+
+━━━ QUICK START ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+cd /Users/umaamaheshwarysv/Desktop/ccdt
+docker-compose up -d
+sleep 30
+./RUN_ALL_TESTS.sh
+./test_end_to_end.sh
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  ✅ All bugs fixed! System ready for deployment!                            ║
+╚══════════════════════════════════════════════════════════════════════════════╝

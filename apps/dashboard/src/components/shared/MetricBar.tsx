@@ -25,7 +25,7 @@ export const MetricBar: React.FC<MetricBarProps> = ({
           {label}
         </span>
         <span style={{ fontSize: 10, color: barColor, fontFamily: 'JetBrains Mono, monospace' }}>
-          {clamped}%
+          {Math.round(clamped)}%
         </span>
       </div>
       <div

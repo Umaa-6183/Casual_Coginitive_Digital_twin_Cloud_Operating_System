@@ -23,7 +23,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Layer 4: Co-Pilot Interface  (Claude API — "Language Centre")       │
+│  Layer 4: Co-Pilot Interface  ( LLM — "Language Centre")       │
 │  FastAPI + SSE streaming + tool use + session management             │
 ├─────────────────────────────────────────────────────────────────────┤
 │  Layer 3: Guardian Layer       (RL + OPA — "Motor Cortex")          │

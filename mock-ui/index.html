@@ -10,7 +10,6 @@
         href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500;600&display=swap"
         rel="stylesheet" />
     <style>
-        /* ─── FONT FALLBACK: never invisible ─────────────────────────────────────── */
         @font-face {
             font-family: 'Syne';
             font-display: swap
@@ -52,6 +51,11 @@
             padding: 0
         }
 
+        html,
+        body {
+            height: 100%
+        }
+
         body {
             background: var(--bg-base);
             color: var(--text-primary);
@@ -68,7 +72,7 @@
             background: repeating-linear-gradient(0deg, transparent, transparent 2px,
                     rgba(0, 212, 255, .013) 2px, rgba(0, 212, 255, .013) 4px);
             pointer-events: none;
-            z-index: 999
+            z-index: 0
         }
 
         /* CRASH BANNER */
@@ -89,6 +93,87 @@
             z-index: 10000;
             letter-spacing: .12em;
             text-transform: uppercase
+        }
+
+        /* RECOVERY BANNER */
+        #recovery-banner {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(90deg, #004d30, #00e890, #004d30);
+            background-size: 200% 100%;
+            animation: bannerPulse 1s ease infinite;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 600;
+            text-align: center;
+            padding: 10px;
+            z-index: 10000;
+            letter-spacing: .12em;
+            text-transform: uppercase
+        }
+
+        /* DEMO MODE BADGE */
+        #demo-badge {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            align-items: flex-end
+        }
+
+        .demo-pill {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 6px 14px;
+            font-size: 10px;
+            color: var(--text-muted);
+            letter-spacing: .1em;
+            text-transform: uppercase
+        }
+
+        .demo-pill.live {
+            border-color: var(--green);
+            color: var(--green)
+        }
+
+        .demo-btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            cursor: pointer;
+            border: 1px solid;
+            transition: all .2s;
+            letter-spacing: .06em
+        }
+
+        .demo-btn-crash {
+            background: var(--red-dim);
+            border-color: var(--red);
+            color: var(--red)
+        }
+
+        .demo-btn-crash:hover {
+            background: var(--red);
+            color: #fff
+        }
+
+        .demo-btn-recover {
+            background: var(--green-dim);
+            border-color: var(--green);
+            color: var(--green)
+        }
+
+        .demo-btn-recover:hover {
+            background: var(--green);
+            color: #000
         }
 
         @keyframes bannerPulse {
@@ -116,7 +201,8 @@
             justify-content: space-between;
             position: sticky;
             top: 0;
-            z-index: 100
+            z-index: 100;
+            transition: margin-top .3s
         }
 
         .logo {
@@ -171,22 +257,28 @@
             border-radius: 50%;
             background: var(--green);
             box-shadow: 0 0 8px var(--green);
-            animation: pulse 2s ease infinite
+            animation: dotpulse 2s ease infinite
         }
 
         .status-dot.degraded {
             background: var(--amber);
             box-shadow: 0 0 8px var(--amber);
-            animation: pulse .5s ease infinite
+            animation: dotpulse .5s ease infinite
         }
 
         .status-dot.critical {
             background: var(--red);
             box-shadow: 0 0 12px var(--red);
-            animation: pulse .3s ease infinite
+            animation: dotpulse .3s ease infinite
         }
 
-        @keyframes pulse {
+        .status-dot.connecting {
+            background: var(--text-muted);
+            box-shadow: none;
+            animation: dotpulse 1s ease infinite
+        }
+
+        @keyframes dotpulse {
 
             0%,
             100% {
@@ -194,7 +286,7 @@
             }
 
             50% {
-                opacity: .4
+                opacity: .35
             }
         }
 
@@ -211,12 +303,27 @@
             color: var(--cyan)
         }
 
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1
+            }
+
+            50% {
+                opacity: .4
+            }
+        }
+
         /* NAV */
         nav {
             background: var(--bg-panel);
             border-bottom: 1px solid var(--border);
             padding: 0 28px;
-            display: flex
+            display: flex;
+            position: sticky;
+            top: 56px;
+            z-index: 99
         }
 
         .nav-tab {
@@ -228,6 +335,7 @@
             text-transform: uppercase;
             border-bottom: 2px solid transparent;
             transition: all .2s;
+            -webkit-user-select: none;
             user-select: none
         }
 
@@ -244,15 +352,17 @@
         main {
             padding: 24px 28px;
             max-width: 1400px;
-            margin: 0 auto
+            margin: 0 auto;
+            position: relative;
+            z-index: 1
         }
 
         .tab-view {
-            display: none
+            display: none !important
         }
 
         .tab-view.active {
-            display: block
+            display: block !important
         }
 
         /* KPI CARDS */
@@ -296,13 +406,13 @@
             background: var(--purple)
         }
 
-        .kpi-card.error {
-            border-color: var(--red);
+        .kpi-card.error-card {
+            border-color: var(--red) !important;
             animation: shake .5s ease
         }
 
-        .kpi-card.error::after {
-            background: var(--red)
+        .kpi-card.error-card::after {
+            background: var(--red) !important
         }
 
         @keyframes shake {
@@ -338,8 +448,8 @@
             transition: color .3s
         }
 
-        .kpi-value.error {
-            color: var(--red)
+        .kpi-value.error-val {
+            color: var(--red) !important
         }
 
         .kpi-delta {
@@ -711,40 +821,6 @@
             display: flex;
             justify-content: space-between;
             font-size: 10px;
-            color: var(--text-muted)
-        }
-
-        /* SPINNER */
-        .spin-wrap {
-            display: none;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 48px;
-            gap: 16px
-        }
-
-        .spin-wrap.on {
-            display: flex
-        }
-
-        .spinner {
-            width: 36px;
-            height: 36px;
-            border: 3px solid var(--border);
-            border-top-color: var(--cyan);
-            border-radius: 50%;
-            animation: spin .8s linear infinite
-        }
-
-        @keyframes spin {
-            to {
-                transform: rotate(360deg)
-            }
-        }
-
-        .spin-text {
-            font-size: 12px;
             color: var(--text-muted)
         }
 
@@ -1166,7 +1242,9 @@
             align-items: center;
             font-size: 10px;
             color: var(--text-muted);
-            letter-spacing: .06em
+            letter-spacing: .06em;
+            position: relative;
+            z-index: 1
         }
 
         .footer-health {
@@ -1184,43 +1262,27 @@
             width: 6px;
             height: 6px;
             border-radius: 50%;
-            background: var(--green)
+            background: var(--green);
+            transition: background .5s
         }
 
         .h-dot.err {
             background: var(--red);
-            animation: pulse .3s ease infinite
+            animation: dotpulse .3s ease infinite
         }
 
         .h-dot.unk {
             background: var(--text-muted)
-        }
-
-        /* SKELETON PULSE — shown while data loads */
-        .skeleton {
-            background: linear-gradient(90deg, var(--bg-hover) 25%, var(--border) 50%, var(--bg-hover) 75%);
-            background-size: 400% 100%;
-            animation: skeleton-pulse 1.4s ease infinite;
-            border-radius: 4px;
-            color: transparent
-        }
-
-        @keyframes skeleton-pulse {
-            0% {
-                background-position: 100% 0
-            }
-
-            100% {
-                background-position: -100% 0
-            }
         }
     </style>
 </head>
 
 <body>
 
-    <div id="crash-banner">&#9888; SYSTEM DEGRADED &#8212; SERVICE DISRUPTION DETECTED &#8212; AUTOMATED RECOVERY IN
-        PROGRESS</div>
+    <div id="crash-banner">&#9888; SYSTEM DEGRADED &#8212; SERVICE DISRUPTION DETECTED &#8212; CCDT AUTONOMOUS RECOVERY
+        IN PROGRESS</div>
+    <div id="recovery-banner">&#10003; SYSTEM RESTORED &#8212; CCDT HEALED ALL SERVICES &#8212; RESUMING NORMAL
+        OPERATIONS</div>
 
     <header>
         <div class="logo">
@@ -1230,14 +1292,14 @@
         <div class="header-right">
             <div class="sys-status">
                 <div class="status-dot" id="sys-dot"></div>
-                <span id="sys-label">Connecting&#8230;</span>
+                <span id="sys-label">Initialising&#8230;</span>
             </div>
             <div class="user-badge">Logged in as <span>admin@nexaops.io</span></div>
-            <div class="user-badge" id="session-id">Session: <span>&#8212;</span></div>
+            <div class="user-badge" id="session-badge">Session: <span id="session-id">&#8212;</span></div>
         </div>
     </header>
 
-    <nav>
+    <nav id="main-nav">
         <div class="nav-tab active" data-tab="dashboard">Dashboard</div>
         <div class="nav-tab" data-tab="orders">Orders</div>
         <div class="nav-tab" data-tab="inventory">Inventory</div>
@@ -1247,31 +1309,31 @@
 
     <main>
 
-        <!-- ══════════════════════════════════════════════ DASHBOARD ══ -->
+        <!-- ═══════════════════════════════════════ DASHBOARD ═══ -->
         <div class="tab-view active" id="tab-dashboard">
 
             <div class="kpi-grid">
                 <div class="kpi-card" id="kc-revenue">
                     <div class="kpi-label">Total Revenue (24h)</div>
-                    <div class="kpi-value" id="kv-revenue">$&#8212;</div>
-                    <div class="kpi-delta" id="kd-revenue">loading&#8230;</div>
+                    <div class="kpi-value" id="kv-revenue">$0</div>
+                    <div class="kpi-delta" id="kd-revenue">&#8212;</div>
                     <div class="kpi-spark" id="ks-revenue"></div>
                 </div>
                 <div class="kpi-card amber" id="kc-orders">
                     <div class="kpi-label">Active Orders</div>
-                    <div class="kpi-value" id="kv-orders">&#8212;</div>
+                    <div class="kpi-value" id="kv-orders">0</div>
                     <div class="kpi-delta" id="kd-orders">&#8212; pending</div>
                     <div class="kpi-spark" id="ks-orders"></div>
                 </div>
                 <div class="kpi-card green" id="kc-users">
                     <div class="kpi-label">Live Sessions</div>
-                    <div class="kpi-value" id="kv-users">&#8212;</div>
+                    <div class="kpi-value" id="kv-users">0</div>
                     <div class="kpi-delta">concurrent users</div>
                     <div class="kpi-spark" id="ks-users"></div>
                 </div>
                 <div class="kpi-card" id="kc-latency">
                     <div class="kpi-label">Avg Response Time</div>
-                    <div class="kpi-value" id="kv-latency">&#8212;ms</div>
+                    <div class="kpi-value" id="kv-latency">0ms</div>
                     <div class="kpi-delta" id="kd-latency">p95: &#8212;ms</div>
                     <div class="kpi-spark" id="ks-latency"></div>
                 </div>
@@ -1280,17 +1342,17 @@
             <div class="metrics-row">
                 <div class="metric-mini">
                     <div class="metric-label">DB Query Rate</div>
-                    <div class="metric-val cyan" id="mv-qps">&#8212;</div>
+                    <div class="metric-val cyan" id="mv-qps">0</div>
                     <div class="metric-sub">queries / second</div>
                 </div>
                 <div class="metric-mini">
                     <div class="metric-label">Cache Hit Rate</div>
-                    <div class="metric-val green" id="mv-cache">&#8212;%</div>
+                    <div class="metric-val green" id="mv-cache">0%</div>
                     <div class="metric-sub">Redis session cache</div>
                 </div>
                 <div class="metric-mini">
                     <div class="metric-label">Error Rate (5 min)</div>
-                    <div class="metric-val amber" id="mv-errs">&#8212;</div>
+                    <div class="metric-val amber" id="mv-errs">0</div>
                     <div class="metric-sub">HTTP 5xx responses</div>
                 </div>
             </div>
@@ -1299,22 +1361,15 @@
                 <div class="panel">
                     <div class="panel-header">
                         <div class="panel-title">Recent Orders</div>
-                        <div class="badge badge-amber" id="orders-badge">CONNECTING</div>
+                        <div class="badge badge-green" id="orders-badge">LIVE</div>
                     </div>
-                    <!-- Spinner: shown while fetching -->
-                    <div class="spin-wrap on" id="orders-spin">
-                        <div class="spinner"></div>
-                        <div class="spin-text">Connecting to PostgreSQL&#8230;</div>
-                    </div>
-                    <!-- Error state: shown when DB is unreachable (FIX: was never shown) -->
                     <div class="err-state" id="orders-err">
                         <div class="err-code">502</div>
                         <div class="err-msg">Bad Gateway &#8212; Database Unreachable</div>
                         <div class="err-detail">upstream connect error or disconnect/reset before headers. reset reason:
                             connection failure</div>
                     </div>
-                    <!-- Data table: hidden until first successful fetch -->
-                    <div class="table-wrap" id="orders-table" style="display:none">
+                    <div class="table-wrap" id="orders-table">
                         <table>
                             <thead>
                                 <tr>
@@ -1345,43 +1400,39 @@
                     <div class="panel-title">Inventory Status</div>
                     <div class="badge badge-amber">12 SKUs</div>
                 </div>
-                <div class="spin-wrap on" id="inv-spin">
-                    <div class="spinner"></div>
-                    <div class="spin-text">Querying inventory from PostgreSQL&#8230;</div>
-                </div>
                 <div class="err-state" id="inv-err">
                     <div class="err-code">503</div>
                     <div class="err-msg">Service Unavailable &#8212; PostgreSQL Connection Lost</div>
                     <div class="err-detail">FATAL: connection to server on socket "/var/run/postgresql/.s.PGSQL.5432"
                         failed</div>
                 </div>
-                <div class="inv-grid" id="inv-grid" style="display:none"></div>
+                <div class="inv-grid" id="inv-grid"></div>
             </div>
 
         </div><!-- /dashboard -->
 
 
-        <!-- ══════════════════════════════════════════════════ ORDERS ══ -->
+        <!-- ══════════════════════════════════════════════ ORDERS ═══ -->
         <div class="tab-view" id="tab-orders">
             <div class="kpi-grid" style="margin-bottom:20px">
                 <div class="kpi-card">
                     <div class="kpi-label">Total Orders</div>
-                    <div class="kpi-value" id="ot-total">&#8212;</div>
+                    <div class="kpi-value" id="ot-total">0</div>
                     <div class="kpi-delta">all statuses</div>
                 </div>
                 <div class="kpi-card green">
                     <div class="kpi-label">Fulfilled</div>
-                    <div class="kpi-value" id="ot-ful">&#8212;</div>
+                    <div class="kpi-value" id="ot-ful">0</div>
                     <div class="kpi-delta">completed</div>
                 </div>
                 <div class="kpi-card amber">
                     <div class="kpi-label">Pending</div>
-                    <div class="kpi-value" id="ot-pen">&#8212;</div>
+                    <div class="kpi-value" id="ot-pen">0</div>
                     <div class="kpi-delta">awaiting processing</div>
                 </div>
                 <div class="kpi-card">
                     <div class="kpi-label">Failed</div>
-                    <div class="kpi-value" id="ot-fail" style="color:var(--red)">&#8212;</div>
+                    <div class="kpi-value" id="ot-fail" style="color:var(--red)">0</div>
                     <div class="kpi-delta" style="color:var(--text-muted)">requires attention</div>
                 </div>
             </div>
@@ -1420,7 +1471,7 @@
         </div><!-- /orders -->
 
 
-        <!-- ══════════════════════════════════════════════ INVENTORY ══ -->
+        <!-- ═══════════════════════════════════════ INVENTORY ═══ -->
         <div class="tab-view" id="tab-inventory">
             <div class="kpi-grid" style="margin-bottom:20px">
                 <div class="kpi-card green">
@@ -1430,12 +1481,12 @@
                 </div>
                 <div class="kpi-card amber">
                     <div class="kpi-label">Low Stock</div>
-                    <div class="kpi-value" id="it-low">&#8212;</div>
+                    <div class="kpi-value" id="it-low">0</div>
                     <div class="kpi-delta">below 25% threshold</div>
                 </div>
                 <div class="kpi-card">
                     <div class="kpi-label">Total Units</div>
-                    <div class="kpi-value" id="it-units">&#8212;</div>
+                    <div class="kpi-value" id="it-units">0</div>
                     <div class="kpi-delta">across all SKUs</div>
                 </div>
                 <div class="kpi-card purple">
@@ -1452,28 +1503,24 @@
                         <button class="btn btn-warn" onclick="reseedInventory()">&#8635; Reseed Stock</button>
                     </div>
                 </div>
-                <div class="spin-wrap" id="im-spin">
-                    <div class="spinner"></div>
-                    <div class="spin-text">Loading inventory&#8230;</div>
-                </div>
                 <div class="inv-mgmt-grid" id="inv-mgmt-grid"></div>
             </div>
         </div><!-- /inventory -->
 
 
-        <!-- ══════════════════════════════════════════════ ANALYTICS ══ -->
+        <!-- ══════════════════════════════════════ ANALYTICS ═══ -->
         <div class="tab-view" id="tab-analytics">
             <div class="an-summary">
                 <div class="an-card">
-                    <div class="an-val" style="color:var(--cyan)" id="an-rev">&#8212;</div>
+                    <div class="an-val" style="color:var(--cyan)" id="an-rev">$0</div>
                     <div class="an-lbl">Total Revenue (24 h)</div>
                 </div>
                 <div class="an-card">
-                    <div class="an-val" style="color:var(--green)" id="an-qps">&#8212;</div>
+                    <div class="an-val" style="color:var(--green)" id="an-qps">0/s</div>
                     <div class="an-lbl">DB Queries / sec</div>
                 </div>
                 <div class="an-card">
-                    <div class="an-val" style="color:var(--amber)" id="an-lat">&#8212;</div>
+                    <div class="an-val" style="color:var(--amber)" id="an-lat">0ms</div>
                     <div class="an-lbl">Response Time p95</div>
                 </div>
             </div>
@@ -1507,7 +1554,7 @@
         </div><!-- /analytics -->
 
 
-        <!-- ══════════════════════════════════════════════ SETTINGS ══ -->
+        <!-- ══════════════════════════════════════ SETTINGS ═══ -->
         <div class="tab-view" id="tab-settings">
             <div class="settings-grid">
 
@@ -1549,6 +1596,9 @@
                     </div>
                     <div class="set-row">
                         <div class="set-key">Platform Uptime</div><span class="set-val" id="set-uptime">&#8212;</span>
+                    </div>
+                    <div class="set-row">
+                        <div class="set-key">Data Source</div><span class="set-val" id="set-source">&#8212;</span>
                     </div>
                 </div>
 
@@ -1646,45 +1696,83 @@
         <div>NexaOps Cloud Platform &middot; Region: ap-south-1 &middot; Build: 4.2.1-stable</div>
         <div class="footer-health">
             <div class="h-item">
-                <div class="h-dot unk" id="hd-pg"></div><span id="hl-pg">PostgreSQL</span>
+                <div class="h-dot" id="hd-pg"></div><span id="hl-pg">PostgreSQL</span>
             </div>
             <div class="h-item">
-                <div class="h-dot unk" id="hd-rd"></div><span id="hl-rd">Redis</span>
+                <div class="h-dot" id="hd-rd"></div><span id="hl-rd">Redis</span>
             </div>
             <div class="h-item">
-                <div class="h-dot unk" id="hd-api"></div><span id="hl-api">API</span>
+                <div class="h-dot" id="hd-api"></div><span id="hl-api">API</span>
             </div>
             <span id="footer-time">&#8212;</span>
         </div>
     </footer>
 
+    <!-- ═══ DEMO CONTROLS (bottom-right) ═══ -->
+    <div id="demo-badge">
+        <div class="demo-pill" id="api-mode-pill">DEMO MODE</div>
+        <button class="demo-btn" id="connect-ccdt-btn" onclick="toggleCCDTListener()" style="background: var(--purple-dim); color: var(--purple); border-color: var(--purple); margin-right: 8px;">&#9881; Enable Guardian</button>
+        <button class="demo-btn demo-btn-crash" id="crash-btn" onclick="simulateCrash()">&#9889; Simulate Crash</button>
+    </div>
+
+    <!-- ═══ CCDT INTEGRATION LAYER ═══ -->
+    <script src="ccdt-integration.js?v=10"></script>
+
     <script>
-        /* ══════════════════════════════════════════════════════════════
-   CONFIG & STATE
-══════════════════════════════════════════════════════════════ */
+        /* ════════════════════════════════════════════════════════
+   CONFIG
+════════════════════════════════════════════════════════ */
+        const API_BASE = ''; // same origin — works through nginx proxy
         let POLL_MS = 3000;
         let pollTimer = null;
-        let pollInFlight = false; // prevent overlapping polls
-        let systemHealthy = null; // null = unknown (first run), true/false after first poll
-        let consecutiveErrors = 0;
-        let feedItems = [],
-            allOrders = [],
-            currentInventory = [];
+        let useRealAPI = false; // will flip to true if /api/health succeeds
+        let isCrashed = false; // demo crash state
+        let crashTimer = null;
+        let recoveryFlash = null;
         const startTime = Date.now();
-        const hist = {
-            qps: [],
-            lat: [],
-            cache: [],
-            sess: [],
-            rev: [],
-            ord: []
-        };
-        const cfg = {
-            alerts: true,
-            feed: true,
-            recovery: true
-        };
 
+        /* ════════════════════════════════════════════════════════
+           MOCK DATA — generated once, mutated each tick
+        ════════════════════════════════════════════════════════ */
+        const CUSTOMERS = [
+            'Alice Sharma', 'Bob Chen', 'Carol Rodriguez', 'Dave Kim',
+            'Erin Patel', 'Frank Mueller', 'Grace Okonkwo', 'Hiro Tanaka',
+            'Iris Volkov', 'Jake Osei', 'Keiko Watanabe', 'Liam Nkosi'
+        ];
+        const PRODS = [{
+                name: 'Compute Node v3',
+                price: 4899
+            },
+            {
+                name: 'SSD Array 4TB',
+                price: 1299
+            },
+            {
+                name: 'GPU Module H100',
+                price: 9999
+            },
+            {
+                name: 'Memory DDR5 64GB',
+                price: 349
+            },
+            {
+                name: 'Network Switch',
+                price: 799
+            },
+            {
+                name: 'Power Supply 1kW',
+                price: 199
+            },
+            {
+                name: 'Cooling Unit',
+                price: 449
+            },
+            {
+                name: 'Fiber Transceiver',
+                price: 89
+            },
+        ];
+        const STATUSES_W = ['fulfilled', 'fulfilled', 'fulfilled', 'pending', 'pending', 'failed'];
         const INV_NAMES = {
             'SKU-001': 'Compute Node v3',
             'SKU-002': 'SSD Array 4TB',
@@ -1699,80 +1787,183 @@
             'SKU-011': 'UPS Module 10kVA',
             'SKU-012': 'Backup Tape Drive'
         };
+        const INV_MAX = {
+            'SKU-001': 1000,
+            'SKU-002': 800,
+            'SKU-003': 500,
+            'SKU-004': 300,
+            'SKU-005': 1000,
+            'SKU-006': 600,
+            'SKU-007': 400,
+            'SKU-008': 900,
+            'SKU-009': 200,
+            'SKU-010': 500,
+            'SKU-011': 150,
+            'SKU-012': 350
+        };
 
+        /* Seed mock orders */
+        let mockOrders = [];
+        (function seedOrders() {
+            let oid = 1000;
+            for (let i = 0; i < 60; i++) {
+                const p = rnd(PRODS);
+                mockOrders.push({
+                    order_id: oid++,
+                    customer_name: rnd(CUSTOMERS),
+                    product_name: p.name,
+                    amount: (p.price + rand(-50, 200)).toFixed(2),
+                    status: rnd(STATUSES_W),
+                    created_at: new Date(Date.now() - rand(0, 86400) * 1000).toISOString()
+                });
+            }
+            mockOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        })();
+
+        /* Seed mock inventory */
+        let mockInventory = [];
+        (function seedInv() {
+            Object.entries(INV_NAMES).forEach(([sku, _]) => {
+                const max = INV_MAX[sku];
+                mockInventory.push({
+                    sku,
+                    quantity: Math.floor(max * 0.45 + rand(0, max * 0.40)),
+                    max_quantity: max
+                });
+            });
+        })();
+
+        /* History for charts */
+        const hist = {
+            qps: [],
+            lat: [],
+            cache: [],
+            sess: [],
+            rev: [],
+            ord: []
+        };
+
+        /* Feed items */
+        let feedItems = [];
+
+        /* Settings state */
+        const cfg = {
+            alerts: true,
+            feed: true,
+            recovery: true
+        };
+
+        /* ════════════════════════════════════════════════════════
+           UTILITIES
+        ════════════════════════════════════════════════════════ */
         const $ = id => document.getElementById(id);
 
-        /* ══════════════════════════════════════════════════════════════
-           FETCH WITH TIMEOUT
-           FIX: without this, a hanging API call freezes the UI forever
-        ══════════════════════════════════════════════════════════════ */
-        async function fetchWithTimeout(url, options = {}, timeoutMs = 6000) {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), timeoutMs);
+        function rnd(arr) {
+            return arr[Math.floor(Math.random() * arr.length)];
+        }
+
+        function rand(min, max) {
+            return Math.random() * (max - min) + min;
+        }
+
+        function randInt(min, max) {
+            return Math.floor(rand(min, max + 1));
+        }
+
+        function fmtUptime(ms) {
+            const s = Math.floor(ms / 1000),
+                m = Math.floor(s / 60),
+                h = Math.floor(m / 60),
+                d = Math.floor(h / 24);
+            if (d > 0) return `${d}d ${h%24}h`;
+            if (h > 0) return `${h}h ${m%60}m`;
+            if (m > 0) return `${m}m ${s%60}s`;
+            return `${s}s`;
+        }
+
+        function shortTime() {
+            return new Date().toLocaleTimeString('en-US', {
+                hour12: false
+            });
+        }
+
+        async function fetchTimeout(url, opts = {}, ms = 5000) {
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), ms);
             try {
-                const resp = await fetch(url, {
-                    ...options,
-                    signal: controller.signal
+                const r = await fetch(url, {
+                    ...opts,
+                    signal: ctrl.signal
                 });
-                clearTimeout(timer);
-                return resp;
-            } catch (err) {
-                clearTimeout(timer);
-                if (err.name === 'AbortError') {
-                    throw new Error(`Request timed out after ${timeoutMs}ms: ${url}`);
-                }
-                throw err;
+                clearTimeout(t);
+                return r;
+            } catch (e) {
+                clearTimeout(t);
+                throw e;
             }
         }
 
-        /* ══════════════════════════════════════════════════════════════
-           TAB NAVIGATION
-        ══════════════════════════════════════════════════════════════ */
-        document.querySelectorAll('.nav-tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                const t = tab.dataset.tab;
-                document.querySelectorAll('.nav-tab').forEach(x => x.classList.remove('active'));
-                document.querySelectorAll('.tab-view').forEach(x => x.classList.remove('active'));
-                tab.classList.add('active');
-                $('tab-' + t).classList.add('active');
-                if (t === 'orders') refreshOrdersTab();
-                if (t === 'inventory') refreshInventoryTab();
-                if (t === 'analytics') refreshAnalyticsTab();
+
+        /* ════════════════════════════════════════════════════════
+           TAB NAVIGATION — wired up before anything else
+        ════════════════════════════════════════════════════════ */
+        let activeTab = 'dashboard';
+
+        function activateTab(tabName) {
+            activeTab = tabName;
+
+            document.querySelectorAll('.nav-tab').forEach(t => {
+                t.classList.toggle('active', t.dataset.tab === tabName);
+            });
+            document.querySelectorAll('.tab-view').forEach(v => {
+                v.classList.toggle('active', v.id === 'tab-' + tabName);
+            });
+            // Refresh tab-specific views
+            if (tabName === 'orders') refreshOrdersTab();
+            if (tabName === 'inventory') refreshInventoryTab();
+            if (tabName === 'analytics') refreshAnalyticsTab();
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('.nav-tab').forEach(tab => {
+                tab.addEventListener('click', () => activateTab(tab.dataset.tab));
             });
         });
 
-        /* ══════════════════════════════════════════════════════════════
-           SPARK BARS (KPI cards)
-        ══════════════════════════════════════════════════════════════ */
-        function buildSpark(id, vals, color) {
-            const el = $(id);
-            if (!el || !vals.length) return;
-            const max = Math.max(...vals, 1);
-            el.innerHTML = vals.map(v =>
-                `<div class="bar" style="height:${Math.max(2, Math.round(v / max * 24))}px;background:${color}"></div>`
-            ).join('');
+        /* ════════════════════════════════════════════════════════
+           SYSTEM STATE
+        ════════════════════════════════════════════════════════ */
+        function setSysState(state) {
+            const dot = $('sys-dot');
+            if (!dot) return;
+            const classes = {
+                healthy: '',
+                degraded: 'degraded',
+                critical: 'critical',
+                connecting: 'connecting'
+            };
+            dot.className = 'status-dot ' + (classes[state] || 'connecting');
+            const msgs = {
+                healthy: 'All Systems Operational',
+                degraded: 'Service Degraded \u2014 CCDT Recovery in Progress',
+                critical: 'CRITICAL \u2014 System Failure Detected',
+                connecting: 'Connecting\u2026'
+            };
+            $('sys-label').textContent = msgs[state] || msgs.connecting;
         }
 
-        /* ══════════════════════════════════════════════════════════════
-           BAR CHART (analytics)
-        ══════════════════════════════════════════════════════════════ */
-        function buildBarChart(id, vals, color, unit) {
-            const el = $(id);
-            if (!el || !vals.length) return;
-            const max = Math.max(...vals, 1);
-            el.innerHTML = vals.map((v, i) => {
-                const pct = Math.max(3, Math.round(v / max * 100));
-                return `<div class="bc-col">
-      <div class="bc-val" style="color:${color}">${Math.round(v)}${unit || ''}</div>
-      <div class="bc-bar" style="height:${pct}%;background:${color};opacity:.7"></div>
-      <div class="bc-lbl">${i + 1}</div>
-    </div>`;
-            }).join('');
+        function updateHealthFooter(pg, rd, api) {
+            $('hd-pg').className = pg ? 'h-dot' : 'h-dot err';
+            $('hl-pg').textContent = pg ? 'PostgreSQL' : 'PostgreSQL \u2715';
+            $('hd-rd').className = rd ? 'h-dot' : 'h-dot err';
+            $('hl-rd').textContent = rd ? 'Redis' : 'Redis \u2715';
+            $('hd-api').className = api ? 'h-dot' : 'h-dot err';
+            $('hl-api').textContent = api ? 'API' : 'API \u2715';
         }
 
-        /* ══════════════════════════════════════════════════════════════
-           ACTIVITY FEED
-        ══════════════════════════════════════════════════════════════ */
+        /* ════════════════════════════════════════════════════════
+           FEED
+        ════════════════════════════════════════════════════════ */
         const FEED_ICONS = {
             login: '&#8594;',
             order: '&#10003;',
@@ -1787,20 +1978,22 @@
         };
 
         function pushFeed(type, text) {
-            if (!cfg.feed) return;
+            if (!cfg.feed && type !== 'error') return;
             feedItems.unshift({
                 type,
                 text,
-                time: new Date().toLocaleTimeString('en-US', {
-                    hour12: false
-                })
+                time: shortTime()
             });
-            if (feedItems.length > 30) feedItems.pop();
-            const feedEl = $('feed-list');
-            if (!feedEl) return;
-            feedEl.innerHTML = feedItems.map(f =>
+            if (feedItems.length > 40) feedItems.pop();
+            renderFeed();
+        }
+
+        function renderFeed() {
+            const el = $('feed-list');
+            if (!el) return;
+            el.innerHTML = feedItems.map(f =>
                 `<div class="feed-item">
-       <div class="feed-icon ${FEED_CLS[f.type] || 'fi-api'}">${FEED_ICONS[f.type] || '&middot;'}</div>
+       <div class="feed-icon ${FEED_CLS[f.type]||'fi-api'}">${FEED_ICONS[f.type]||'&middot;'}</div>
        <div class="feed-body">
          <div class="feed-text">${f.text}</div>
          <div class="feed-time">${f.time}</div>
@@ -1809,96 +2002,35 @@
             ).join('');
         }
 
-        /* ══════════════════════════════════════════════════════════════
-           SYSTEM STATE
-        ══════════════════════════════════════════════════════════════ */
-        function setSystemState(state) {
-            const dot = $('sys-dot');
-            if (!dot) return;
-            dot.className = 'status-dot' + (state !== 'healthy' ? ' ' + state : '');
-            $('crash-banner').style.display = (state !== 'healthy' && cfg.alerts) ? 'block' : 'none';
-            const msgs = {
-                connecting: 'Connecting\u2026',
-                healthy: 'All Systems Operational',
-                degraded: 'Service Degraded \u2014 Recovery in Progress',
-                critical: 'CRITICAL \u2014 System Failure'
-            };
-            $('sys-label').textContent = msgs[state] || msgs.critical;
-            // API footer dot
-            $('hd-api').className = state === 'critical' ? 'h-dot err' : 'h-dot';
-            systemHealthy = (state === 'healthy');
+        /* ════════════════════════════════════════════════════════
+           SPARK / BAR CHARTS
+        ════════════════════════════════════════════════════════ */
+        function buildSpark(id, vals, color) {
+            const el = $(id);
+            if (!el || !vals.length) return;
+            const max = Math.max(...vals, 1);
+            el.innerHTML = vals.map(v =>
+                `<div class="bar" style="height:${Math.max(2,Math.round(v/max*24))}px;background:${color}"></div>`
+            ).join('');
         }
 
-        /* ══════════════════════════════════════════════════════════════
-           ORDERS PANEL STATES (dashboard)
-        ══════════════════════════════════════════════════════════════ */
-        function ordersLoading() {
-            $('orders-spin').className = 'spin-wrap on';
-            $('orders-err').className = 'err-state';
-            $('orders-table').style.display = 'none';
-            $('orders-badge').textContent = 'LOADING\u2026';
-            $('orders-badge').className = 'badge badge-amber';
-        }
-
-        // FIX: was calling ordersLoading() when DB was down — showed spinner forever.
-        // Now correctly shows the 502 error panel.
-        function ordersError() {
-            $('orders-spin').className = 'spin-wrap';
-            $('orders-err').className = 'err-state on';
-            $('orders-table').style.display = 'none';
-            $('orders-badge').textContent = 'ERROR';
-            $('orders-badge').className = 'badge badge-red';
-            $('kc-orders').classList.add('error');
-            $('kv-orders').classList.add('error');
-            $('kv-orders').textContent = 'ERR';
-        }
-
-        function ordersOk(rows) {
-            $('orders-spin').className = 'spin-wrap';
-            $('orders-err').className = 'err-state';
-            $('orders-table').style.display = '';
-            $('orders-badge').textContent = 'LIVE';
-            $('orders-badge').className = 'badge badge-green';
-            $('kc-orders').classList.remove('error');
-            $('kv-orders').classList.remove('error');
-            renderRows('orders-body', rows);
-        }
-
-        /* ══════════════════════════════════════════════════════════════
-           INVENTORY PANEL STATES (dashboard)
-        ══════════════════════════════════════════════════════════════ */
-        function invLoading() {
-            $('inv-spin').className = 'spin-wrap on';
-            $('inv-err').className = 'err-state';
-            $('inv-grid').style.display = 'none';
-        }
-
-        // FIX: same bug as orders — was calling invLoading() when DB was down.
-        function invError() {
-            $('inv-spin').className = 'spin-wrap';
-            $('inv-err').className = 'err-state on';
-            $('inv-grid').style.display = 'none';
-        }
-
-        function invOk(items) {
-            $('inv-spin').className = 'spin-wrap';
-            $('inv-err').className = 'err-state';
-            $('inv-grid').style.display = 'grid';
-            $('inv-grid').innerHTML = items.map(it => {
-                const pct = Math.min(100, Math.round(it.quantity / it.max_quantity * 100));
-                const cls = pct < 25 ? 'bar-low' : pct < 50 ? 'bar-mid' : 'bar-ok';
-                return `<div class="inv-cell">
-      <div class="inv-sku">${it.sku}</div>
-      <div class="inv-name">${INV_NAMES[it.sku] || it.sku}</div>
-      <div class="bar-track"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
-      <div class="inv-meta"><span>${it.quantity.toLocaleString()} units</span><span>${pct}%</span></div>
+        function buildBarChart(id, vals, color, unit) {
+            const el = $(id);
+            if (!el || !vals.length) return;
+            const max = Math.max(...vals, 1);
+            el.innerHTML = vals.map((v, i) => {
+                const pct = Math.max(3, Math.round(v / max * 100));
+                return `<div class="bc-col">
+      <div class="bc-val" style="color:${color}">${Math.round(v)}${unit||''}</div>
+      <div class="bc-bar" style="height:${pct}%;background:${color};opacity:.7"></div>
+      <div class="bc-lbl">${i+1}</div>
     </div>`;
             }).join('');
         }
 
-        /* ══════════════════════════════════════════════════════════════
-           ROW RENDERER (shared by orders panel + orders tab)
-        ══════════════════════════════════════════════════════════════ */
+        /* ════════════════════════════════════════════════════════
+           ROW RENDERER
+        ════════════════════════════════════════════════════════ */
         function renderRows(tbodyId, rows) {
             const el = $(tbodyId);
             if (!el) return;
@@ -1910,7 +2042,7 @@
             el.innerHTML = rows.map(r => {
                 const pc = r.status === 'fulfilled' ? 'pill-green' : r.status === 'pending' ? 'pill-amber' :
                     'pill-red';
-                let ts = '—';
+                let ts = '&#8212;';
                 try {
                     ts = new Date(r.created_at).toLocaleTimeString('en-US', {
                         hour12: false
@@ -1927,24 +2059,78 @@
             }).join('');
         }
 
-        /* ══════════════════════════════════════════════════════════════
-           KPI UPDATE
-        ══════════════════════════════════════════════════════════════ */
+        /* ════════════════════════════════════════════════════════
+           PANEL STATES — crash vs normal
+        ════════════════════════════════════════════════════════ */
+        function setOrdersPanel(state) {
+            const err = $('orders-err');
+            const table = $('orders-table');
+            const badge = $('orders-badge');
+            const kc = $('kc-orders');
+            const kv = $('kv-orders');
+            if (state === 'error') {
+                err.className = 'err-state on';
+                table.style.display = 'none';
+                badge.textContent = 'ERROR';
+                badge.className = 'badge badge-red';
+                kc.classList.add('error-card');
+                kv.classList.add('error-val');
+                kv.textContent = 'ERR';
+            } else {
+                err.className = 'err-state';
+                table.style.display = '';
+                badge.textContent = 'LIVE';
+                badge.className = 'badge badge-green';
+                kc.classList.remove('error-card');
+                kv.classList.remove('error-val');
+            }
+        }
+
+        function setInvPanel(state) {
+            const err = $('inv-err');
+            const grid = $('inv-grid');
+            if (state === 'error') {
+                err.className = 'err-state on';
+                grid.style.display = 'none';
+            } else {
+                err.className = 'err-state';
+                grid.style.display = '';
+            }
+        }
+
+        /* ════════════════════════════════════════════════════════
+           RENDER INVENTORY GRID (dashboard)
+        ════════════════════════════════════════════════════════ */
+        function renderInvGrid(items) {
+            $('inv-grid').innerHTML = items.map(it => {
+                const pct = Math.min(100, Math.round(it.quantity / it.max_quantity * 100));
+                const cls = pct < 25 ? 'bar-low' : pct < 50 ? 'bar-mid' : 'bar-ok';
+                return `<div class="inv-cell">
+      <div class="inv-sku">${it.sku}</div>
+      <div class="inv-name">${INV_NAMES[it.sku]||it.sku}</div>
+      <div class="bar-track"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
+      <div class="inv-meta"><span>${it.quantity.toLocaleString()} units</span><span>${pct}%</span></div>
+    </div>`;
+            }).join('');
+        }
+
+        /* ════════════════════════════════════════════════════════
+           UPDATE KPIs
+        ════════════════════════════════════════════════════════ */
         function updateKPIs(d) {
             $('kv-revenue').textContent = '$' + Number(d.revenue_24h || 0).toLocaleString(undefined, {
                 maximumFractionDigits: 0
             });
             $('kd-revenue').textContent = '+' + (d.revenue_delta || 0).toFixed(1) + '% vs yesterday';
-            $('kv-orders').textContent = d.active_orders ? ? '—';
+            if (!$('kv-orders').classList.contains('error-val'))
+                $('kv-orders').textContent = d.active_orders || '0';
             $('kd-orders').textContent = (d.pending_orders || 0) + ' pending';
-            $('kv-users').textContent = d.live_sessions ? ? '—';
-            $('kv-latency').textContent = (d.avg_latency_ms ? ? '—') + 'ms';
-            $('kd-latency').textContent = 'p95: ' + (d.p95_latency_ms || '—') + 'ms';
-            $('mv-qps').textContent = d.db_qps ? ? '—';
-            $('mv-cache').textContent = (d.cache_hit_rate ? ? '—') + '%';
-            $('mv-errs').textContent = d.error_rate_5m ? ? '0';
-
-            // History for sparks & analytics charts (cap at 12 points)
+            $('kv-users').textContent = d.live_sessions || '0';
+            $('kv-latency').textContent = (d.avg_latency_ms || '0') + 'ms';
+            $('kd-latency').textContent = 'p95: ' + (d.p95_latency_ms || '0') + 'ms';
+            $('mv-qps').textContent = d.db_qps || '0';
+            $('mv-cache').textContent = (d.cache_hit_rate || '0') + '%';
+            $('mv-errs').textContent = d.error_rate_5m || '0';
             const map = {
                 qps: d.db_qps,
                 lat: d.avg_latency_ms,
@@ -1957,39 +2143,380 @@
                 hist[k].push(Number(map[k] || 0));
                 if (hist[k].length > 12) hist[k].shift();
             });
-
             buildSpark('ks-revenue', hist.rev, 'var(--cyan)');
             buildSpark('ks-orders', hist.ord, 'var(--amber)');
             buildSpark('ks-users', hist.sess, 'var(--green)');
             buildSpark('ks-latency', hist.lat, 'var(--cyan)');
-
-            // Analytics summary
+            // Analytics
             $('an-rev').textContent = '$' + Number(d.revenue_24h || 0).toLocaleString(undefined, {
                 maximumFractionDigits: 0
             });
             $('an-qps').textContent = (d.db_qps || 0) + '/s';
-            $('an-lat').textContent = (d.p95_latency_ms || d.avg_latency_ms || '—') + 'ms';
+            $('an-lat').textContent = (d.p95_latency_ms || d.avg_latency_ms || '0') + 'ms';
         }
 
-        /* ══════════════════════════════════════════════════════════════
-           HEALTH FOOTER UPDATE
-           FIX: now always called, on every poll path (success, isDown, and catch)
-        ══════════════════════════════════════════════════════════════ */
-        function updateHealth(h) {
-            $('hd-pg').className = h.postgres ? 'h-dot' : 'h-dot err';
-            $('hl-pg').textContent = h.postgres ? 'PostgreSQL' : 'PostgreSQL \u2715';
-            $('hd-rd').className = h.redis ? 'h-dot' : 'h-dot err';
-            $('hl-rd').textContent = h.redis ? 'Redis' : 'Redis \u2715';
+        /* ════════════════════════════════════════════════════════
+           GENERATE MOCK TICK DATA
+        ════════════════════════════════════════════════════════ */
+        function getMockDashboard() {
+            const revenue = mockOrders
+                .filter(o => o.status === 'fulfilled' && (Date.now() - new Date(o.created_at).getTime()) < 86400000)
+                .reduce((s, o) => s + parseFloat(o.amount), 0);
+            return {
+                revenue_24h: revenue,
+                revenue_delta: parseFloat(rand(2, 8).toFixed(1)),
+                active_orders: mockOrders.filter(o => o.status === 'pending' || o.status === 'fulfilled').length,
+                pending_orders: mockOrders.filter(o => o.status === 'pending').length,
+                live_sessions: randInt(82, 118),
+                avg_latency_ms: randInt(8, 35),
+                p95_latency_ms: randInt(40, 90),
+                db_qps: randInt(120, 380),
+                cache_hit_rate: parseFloat((rand(83, 95)).toFixed(1)),
+                error_rate_5m: randInt(0, 3),
+                session_id: Math.random().toString(36).slice(2, 10)
+            };
         }
 
-        /* ══════════════════════════════════════════════════════════════
+        function mutateMockInventory() {
+            // Realistic drift each tick
+            mockInventory.forEach(it => {
+                const pct = it.quantity / it.max_quantity;
+                let delta;
+                if (pct < 0.15) delta = randInt(Math.floor(it.max_quantity * .25), Math.floor(it.max_quantity *
+                    .45));
+                else if (pct < 0.40) delta = Math.random() < 0.7 ? randInt(10, 40) : randInt(-2, -1);
+                else delta = Math.random() < 0.35 ? randInt(1, 8) : randInt(-4, -1);
+                it.quantity = Math.min(it.max_quantity, Math.max(0, it.quantity + delta));
+            });
+        }
+
+        function addMockOrder() {
+            if (Math.random() < 0.30) {
+                const p = rnd(PRODS);
+                const o = {
+                    order_id: Math.max(...mockOrders.map(x => x.order_id)) + 1,
+                    customer_name: rnd(CUSTOMERS),
+                    product_name: p.name,
+                    amount: (p.price + rand(-30, 150)).toFixed(2),
+                    status: 'pending',
+                    created_at: new Date().toISOString()
+                };
+                mockOrders.unshift(o);
+                if (mockOrders.length > 100) mockOrders.pop();
+                pushFeed('order',
+                    `<strong>${o.customer_name}</strong> placed order #${o.order_id} \u2014 $${parseFloat(o.amount).toFixed(2)}`
+                );
+            }
+        }
+
+        /* ════════════════════════════════════════════════════════
+           MOCK TICK — runs when real API is unavailable
+        ════════════════════════════════════════════════════════ */
+        function runMockTick() {
+            if (isCrashed) return; // crash handles its own state
+            mutateMockInventory();
+            addMockOrder();
+            const dash = getMockDashboard();
+            updateKPIs(dash);
+            const el = $('set-limit');
+            const limit = parseInt((el && el.value) || '10');
+            setOrdersPanel('ok');
+            renderRows('orders-body', mockOrders.slice(0, limit));
+            setInvPanel('ok');
+            renderInvGrid(mockInventory);
+            // Session ID
+            $('session-id').textContent = dash.session_id + '…';
+            // Footer
+            updateHealthFooter(true, true, true);
+            setSysState('healthy');
+            // Random feed events
+            if (cfg.feed) {
+                if (Math.random() < 0.5) {
+                    const pages = ['/dashboard', '/orders', '/inventory', '/analytics'];
+                    pushFeed('login',
+                        `<strong>${rnd(CUSTOMERS.map(c=>c.split(' ')[0].toLowerCase()+'@corp.io'))}</strong> navigated to ${rnd(pages)}`
+                    );
+                }
+                if (Math.random() < 0.25) {
+                    const acts = ['exported CSV report', 'updated stock threshold', 'approved purchase order',
+                        'ran analytics query'
+                    ];
+                    pushFeed('api', `API call: <strong>${rnd(acts)}</strong>`);
+                }
+            }
+            // Refresh active tab
+            const currentTab = document.querySelector('.nav-tab.active');
+            const currentTabName = currentTab ? currentTab.dataset.tab : null;
+            if (currentTabName === 'orders') refreshOrdersTab();
+            if (currentTabName === 'inventory') refreshInventoryTab();
+            if (currentTabName === 'analytics') refreshAnalyticsTab();
+        }
+
+        /* ════════════════════════════════════════════════════════
+           REAL API POLL — runs when backend is available
+        ════════════════════════════════════════════════════════ */
+        let apiPollInFlight = false;
+        async function runApiPoll() {
+            if (apiPollInFlight || isCrashed) return;
+            apiPollInFlight = true;
+            try {
+                // 1. Health
+                const hr = await fetchTimeout('/api/health', {}, 4000);
+                if (!hr.ok) throw new Error('health ' + hr.status);
+                const health = await hr.json();
+                updateHealthFooter(health.postgres, health.redis, true);
+                if (!health.postgres || !health.redis) {
+                    setSysState('degraded');
+                    setOrdersPanel('error');
+                    setInvPanel('error');
+                    pushFeed('error', '<strong>ALERT</strong>: Backend service degraded');
+                    return;
+                }
+                setSysState('healthy');
+                // 2. Dashboard
+                const dr = await fetchTimeout('/api/dashboard', {}, 4000);
+                if (dr.ok) {
+                    const d = await dr.json();
+                    updateKPIs(d);
+                    $('session-id').textContent = (d.session_id || '').slice(0, 8) + '…';
+                }
+                // 3. Orders
+                const el = $('set-limit');
+                const limit = parseInt((el && el.value) || '10');
+                const or = await fetchTimeout('/api/orders?limit=' + limit, {}, 4000);
+                if (or.ok) {
+                    const o = await or.json();
+                    mockOrders = o.rows || mockOrders; // sync local copy
+                    setOrdersPanel('ok');
+                    renderRows('orders-body', mockOrders.slice(0, limit));
+                    if (o.new_order) {
+                        const x = o.new_order;
+                        pushFeed('order',
+                            `<strong>${x.customer_name}</strong> placed order #${x.order_id} \u2014 $${parseFloat(x.amount).toFixed(2)}`
+                        );
+                    }
+                } else {
+                    setOrdersPanel('error');
+                }
+                // 4. Inventory
+                const ir = await fetchTimeout('/api/inventory', {}, 4000);
+                if (ir.ok) {
+                    const iv = await ir.json();
+                    mockInventory = iv.items || mockInventory; // sync local copy
+                    setInvPanel('ok');
+                    renderInvGrid(mockInventory);
+                } else {
+                    setInvPanel('error');
+                }
+                // Feed events
+                if (cfg.feed) {
+                    if (Math.random() < 0.5) pushFeed('login',
+                        `<strong>${rnd(CUSTOMERS)}</strong> navigated to ${rnd(['/dashboard','/orders','/inventory'])}`
+                    );
+                    if (Math.random() < 0.25) {
+                        const acts = ['exported CSV report', 'approved purchase order', 'ran analytics query'];
+                        pushFeed('api', `API call: <strong>${rnd(acts)}</strong>`);
+                    }
+                }
+                // Refresh active tab
+                const currentTab = document.querySelector('.nav-tab.active');
+                const currentTabName = currentTab ? currentTab.dataset.tab : null;
+                if (currentTabName === 'orders') refreshOrdersTab();
+                if (currentTabName === 'inventory') refreshInventoryTab();
+                if (currentTabName === 'analytics') refreshAnalyticsTab();
+            } catch (err) {
+                console.warn('API poll failed, staying in mock mode:', err.message);
+                useRealAPI = false;
+                updateSourcePill();
+                runMockTick(); // fallback to mock immediately
+            } finally {
+                apiPollInFlight = false;
+            }
+        }
+
+        /* ════════════════════════════════════════════════════════
+           MAIN TICK — dispatcher
+        ════════════════════════════════════════════════════════ */
+        async function tick() {
+            $('footer-time').textContent = shortTime();
+            if ($('set-uptime')) $('set-uptime').textContent = fmtUptime(Date.now() - startTime);
+            if (useRealAPI) {
+                await runApiPoll();
+            } else {
+                runMockTick();
+            }
+        }
+
+        /* ════════════════════════════════════════════════════════
+           API DISCOVERY — runs in background every 10s
+        ════════════════════════════════════════════════════════ */
+        async function tryDiscoverAPI() {
+            try {
+                const r = await fetchTimeout('/api/health', {}, 3000);
+                if (r.ok) {
+                    const h = await r.json();
+                    if (!useRealAPI) {
+                        useRealAPI = true;
+                        updateSourcePill();
+                        pushFeed('api',
+                            '<strong>System</strong>: Connected to live backend API \u2014 switching to real data'
+                        );
+                        console.info('Switched to real API');
+                    }
+                }
+            } catch (_) {
+                if (useRealAPI) {
+                    useRealAPI = false;
+                    updateSourcePill();
+                    pushFeed('api',
+                        '<strong>System</strong>: Backend unreachable \u2014 running on local mock data');
+                }
+            }
+        }
+
+        function updateSourcePill() {
+            const pill = $('api-mode-pill');
+            if (!pill) return;
+            if (useRealAPI) {
+                pill.textContent = 'LIVE API';
+                pill.classList.add('live');
+            } else {
+                pill.textContent = 'DEMO MODE';
+                pill.classList.remove('live');
+            }
+            const s = $('set-source');
+            if (s) s.textContent = useRealAPI ? 'Live API (FastAPI backend)' : 'Mock data (standalone demo)';
+        }
+
+        /* ════════════════════════════════════════════════════════
+           DEMO CRASH / RECOVERY SIMULATION
+        ════════════════════════════════════════════════════════ */
+        
+        function toggleCCDTListener() {
+            if (window.CCDTState) {
+                CCDTState.listenForIncidents = true;
+                const btn = $('connect-ccdt-btn');
+                if (btn) {
+                    btn.textContent = 'Guardian Active';
+                    btn.style.background = 'rgba(0, 255, 100, 0.1)';
+                    btn.style.color = '#00ff66';
+                    btn.style.borderColor = '#00ff66';
+                }
+            }
+        }
+
+        function simulateCrash() {
+            if (isCrashed) return;
+            isCrashed = true;
+            setSysState('degraded');
+            if (cfg.alerts) $('crash-banner').style.display = 'block';
+            const rb = $('recovery-banner');
+            if (rb) rb.style.display = 'block';
+            setOrdersPanel('error');
+            setInvPanel('error');
+            updateHealthFooter(false, false, false);
+            // Error KPIs
+            ['kv-revenue', 'kv-latency'].forEach(id => {
+                const el = $(id);
+                if (el) {
+                    el.classList.add('error-val');
+                    el.textContent = 'ERR';
+                }
+            });
+            $('kv-users').textContent = '0';
+            $('mv-qps').textContent = '0';
+            $('mv-cache').textContent = '0%';
+            $('mv-errs').textContent = '99';
+            pushFeed('error', '<strong>INCIDENT</strong>: OOM cascade detected \u2014 demo-postgres unresponsive');
+            pushFeed('error', '<strong>ERROR 502</strong>: Connection refused \u2014 max retries exhausted');
+            pushFeed('error', '<strong>ALERT</strong>: Redis session store unreachable \u2014 all sessions lost');
+            // INJECT MOCK INCIDENT FOR CCDT INTEGRATION
+            if (window.CCDTState) {
+                CCDTState.activeIncident = {
+                    id: 'INC-MOCK-PG',
+                    severity: 'critical',
+                    type: 'fault',
+                    title: 'OOM Cascade Detected',
+                    node: 'demo-postgres',
+                    rootCause: 'Memory exhaustion in demo-postgres',
+                    confidence: 94,
+                    description: 'OOM Cascade — Memory exhaustion in demo-postgres',
+                    affected: ['demo-postgres', 'order-svc'],
+                    createdAt: Date.now() / 1000,
+                    status: 'active'
+                };
+                CCDTState.overlayDismissed = false;
+                if (window.showIncidentOverlay) showIncidentOverlay(CCDTState.activeIncident);
+                if (window.updateCCDTStatusBar) updateCCDTStatusBar(null, CCDTState.activeIncident);
+            }
+
+            // Update crash button
+            $('crash-btn').style.display = 'none';
+            // Auto-recover after 15s to demonstrate Autonomous Healing
+            clearTimeout(crashTimer);
+            crashTimer = setTimeout(triggerRecovery, 15000);
+        }
+
+        function triggerRecovery() {
+            if (!isCrashed) return;
+            clearTimeout(crashTimer);
+            
+            // Tell CCDT Integration to show autonomous success state
+            if (window.CCDTState && CCDTState.activeIncident && CCDTState.activeIncident.id === 'INC-MOCK-PG') {
+                CCDTState.resolvedLocally = CCDTState.resolvedLocally || {};
+                CCDTState.resolvedLocally[CCDTState.activeIncident.id] = true;
+                CCDTState.activeIncident.status = 'auto-resolved';
+                CCDTState.activeIncident.action_taken = 'restart_pod';
+                if (window.showIncidentOverlay) showIncidentOverlay(CCDTState.activeIncident);
+                if (window.updateCCDTStatusBar) updateCCDTStatusBar(null, CCDTState.activeIncident);
+                
+                // Keep the success state on screen for 5 seconds before hiding
+                setTimeout(() => {
+                    isCrashed = false; // RELEASE PRIORITY OVERRIDE ONLY AFTER PANEL HIDES
+                    if (window.CCDTState && window.CCDTState.activeIncident && window.CCDTState.activeIncident.id === 'INC-MOCK-PG') {
+                        if (window.hideIncidentOverlay) window.hideIncidentOverlay();
+                        window.CCDTState.activeIncident = null;
+                    }
+                }, 5000);
+            } else {
+                isCrashed = false;
+            }
+
+            const cb = $('crash-banner');
+            if (cb) cb.style.display = 'none';
+            if (cfg.recovery) {
+                $('recovery-banner').style.display = 'block';
+                clearTimeout(recoveryFlash);
+                recoveryFlash = setTimeout(() => {
+                    const rb = $('recovery-banner');
+                    if (rb) rb.style.display = 'none';
+                }, 6000);
+            }
+            setSysState('healthy');
+            setOrdersPanel('ok');
+            setInvPanel('ok');
+            ['kv-revenue', 'kv-latency'].forEach(id => {
+                const el = $(id);
+                if (el) el.classList.remove('error-val');
+            });
+            updateHealthFooter(true, true, true);
+            pushFeed('login', '<strong>CCDT GUARDIAN</strong>: restart_pod executed \u2014 demo-postgres restored');
+            pushFeed('login', '<strong>RECOVERY</strong>: All services restored \u2014 MTTR: 23s');
+            pushFeed('api', '<strong>Co-Pilot</strong>: Root cause confirmed \u2014 OOM cascade resolved autonomously');
+            pushFeed('api', '<strong>Co-Pilot</strong>: Root cause confirmed \u2014 OOM cascade resolved autonomously');
+            $('crash-btn').style.display = '';
+            // Force immediate refresh
+            runMockTick();
+        }
+
+        /* ════════════════════════════════════════════════════════
            ORDERS TAB
-        ══════════════════════════════════════════════════════════════ */
+        ════════════════════════════════════════════════════════ */
         function refreshOrdersTab() {
-            const f = allOrders.filter(r => r.status === 'fulfilled').length;
-            const p = allOrders.filter(r => r.status === 'pending').length;
-            const x = allOrders.filter(r => r.status === 'failed').length;
-            $('ot-total').textContent = allOrders.length;
+            const f = mockOrders.filter(r => r.status === 'fulfilled').length;
+            const p = mockOrders.filter(r => r.status === 'pending').length;
+            const x = mockOrders.filter(r => r.status === 'failed').length;
+            $('ot-total').textContent = mockOrders.length;
             $('ot-ful').textContent = f;
             $('ot-pen').textContent = p;
             $('ot-fail').textContent = x;
@@ -1997,9 +2524,12 @@
         }
 
         function filterOrders() {
-            const st = $('of-status').value;
-            const sr = $('of-search').value.toLowerCase();
-            const filtered = allOrders.filter(r =>
+            const stEl = $('of-status');
+            const st = (stEl && stEl.value) || 'all';
+
+            const srEl = $('of-search');
+            const sr = ((srEl && srEl.value) || '').toLowerCase();
+            const filtered = mockOrders.filter(r =>
                 (st === 'all' || r.status === st) &&
                 (!sr || r.customer_name.toLowerCase().includes(sr) || r.product_name.toLowerCase().includes(sr))
             );
@@ -2007,23 +2537,16 @@
             renderRows('all-orders-body', filtered);
         }
 
-        /* ══════════════════════════════════════════════════════════════
+        /* ════════════════════════════════════════════════════════
            INVENTORY TAB
-        ══════════════════════════════════════════════════════════════ */
+        ════════════════════════════════════════════════════════ */
         function refreshInventoryTab() {
-            if (!currentInventory.length) {
-                $('im-spin').className = 'spin-wrap on';
-                return;
-            }
-            $('im-spin').className = 'spin-wrap';
-            const total = currentInventory.reduce((s, i) => s + i.quantity, 0);
-            const low = currentInventory.filter(i => i.quantity / i.max_quantity < 0.25).length;
+            const total = mockInventory.reduce((s, i) => s + i.quantity, 0);
+            const low = mockInventory.filter(i => i.quantity / i.max_quantity < 0.25).length;
             $('it-units').textContent = total.toLocaleString();
             $('it-low').textContent = low;
-            $('it-updated').textContent = new Date().toLocaleTimeString('en-US', {
-                hour12: false
-            });
-            $('inv-mgmt-grid').innerHTML = currentInventory.map(it => {
+            $('it-updated').textContent = shortTime();
+            $('inv-mgmt-grid').innerHTML = mockInventory.map(it => {
                 const pct = Math.min(100, Math.round(it.quantity / it.max_quantity * 100));
                 const [qCls, scCls, scTxt] =
                 pct < 15 ? ['iq-crit', 'sc-crit', 'CRITICAL'] :
@@ -2031,7 +2554,7 @@
                 const bCls = pct < 25 ? 'bar-low' : pct < 50 ? 'bar-mid' : 'bar-ok';
                 return `<div class="inv-card">
       <div class="inv-card-top">
-        <div><div class="inv-sku-sm">${it.sku}</div><div class="inv-name-sm">${INV_NAMES[it.sku] || it.sku}</div></div>
+        <div><div class="inv-sku-sm">${it.sku}</div><div class="inv-name-sm">${INV_NAMES[it.sku]||it.sku}</div></div>
         <span class="status-chip ${scCls}">${scTxt}</span>
       </div>
       <div class="inv-qty-big ${qCls}">${it.quantity.toLocaleString()}</div>
@@ -2043,19 +2566,18 @@
             }).join('');
         }
 
-        /* ══════════════════════════════════════════════════════════════
+        /* ════════════════════════════════════════════════════════
            ANALYTICS TAB
-        ══════════════════════════════════════════════════════════════ */
+        ════════════════════════════════════════════════════════ */
         function refreshAnalyticsTab() {
             buildBarChart('ch-qps', hist.qps, 'var(--cyan)', '');
             buildBarChart('ch-lat', hist.lat, 'var(--amber)', 'ms');
             buildBarChart('ch-cache', hist.cache, 'var(--green)', '%');
             buildBarChart('ch-sess', hist.sess, 'var(--purple)', '');
-            if (!allOrders.length) return;
-            const total = allOrders.length || 1;
-            const f = allOrders.filter(r => r.status === 'fulfilled').length;
-            const p = allOrders.filter(r => r.status === 'pending').length;
-            const x = allOrders.filter(r => r.status === 'failed').length;
+            const total = mockOrders.length || 1;
+            const f = mockOrders.filter(r => r.status === 'fulfilled').length;
+            const p = mockOrders.filter(r => r.status === 'pending').length;
+            const x = mockOrders.filter(r => r.status === 'failed').length;
             $('breakdown-grid').innerHTML = [{
                     label: 'Fulfilled',
                     count: f,
@@ -2071,260 +2593,91 @@
                     count: x,
                     color: 'var(--red)'
                 }
-            ].map(s =>
-                `<div class="bd-card">
-      <div class="bd-val" style="color:${s.color}">${s.count}</div>
-      <div class="bd-lbl">${s.label}</div>
-      <div class="bd-pct" style="color:${s.color}">${Math.round(s.count / total * 100)}%</div>
-    </div>`
-            ).join('');
+            ].map(s => `<div class="bd-card">
+    <div class="bd-val" style="color:${s.color}">${s.count}</div>
+    <div class="bd-lbl">${s.label}</div>
+    <div class="bd-pct" style="color:${s.color}">${Math.round(s.count/total*100)}%</div>
+  </div>`).join('');
         }
 
-        /* ══════════════════════════════════════════════════════════════
+        /* ════════════════════════════════════════════════════════
            SETTINGS ACTIONS
-        ══════════════════════════════════════════════════════════════ */
+        ════════════════════════════════════════════════════════ */
         function toggleSet(k) {
             cfg[k] = !cfg[k];
-            $('tog-' + k).className = cfg[k] ? 'toggle on' : 'toggle off';
+            const el = $('tog-' + k);
+            if (el) el.className = cfg[k] ? 'toggle on' : 'toggle off';
         }
 
         function changePoll() {
-            POLL_MS = parseInt($('set-poll').value);
+            const el = $('set-poll');
+            POLL_MS = parseInt((el && el.value) || '3000');
             clearInterval(pollTimer);
-            pollTimer = setInterval(safePoll, POLL_MS);
+            pollTimer = setInterval(tick, POLL_MS);
         }
 
         async function testConn() {
             const el = $('conn-result');
+            if (!el) return;
             el.style.cssText = 'display:block;font-size:11px;margin-top:10px;color:var(--text-muted)';
             el.textContent = 'Testing connections\u2026';
             try {
-                const resp = await fetchWithTimeout('/api/health', {}, 5000);
-                const d = await resp.json();
+                const r = await fetchTimeout('/api/health', {}, 5000);
+                const d = await r.json();
                 el.style.color = (d.postgres && d.redis) ? 'var(--green)' : 'var(--red)';
-                el.textContent = (d.postgres ? '\u2713 PostgreSQL' : '\u2715 PostgreSQL') +
-                    '  |  ' +
-                    (d.redis ? '\u2713 Redis' : '\u2715 Redis');
+                el.textContent = (d.postgres ? '\u2713 PostgreSQL' : '\u2715 PostgreSQL') + '  |  ' + (d.redis ?
+                    '\u2713 Redis' : '\u2715 Redis');
             } catch (e) {
-                el.style.color = 'var(--red)';
-                el.textContent = 'Error: ' + e.message;
+                el.style.color = 'var(--amber)';
+                el.textContent = 'Backend not reachable \u2014 running in demo mode';
             }
         }
 
         async function reseedInventory() {
-            if (!confirm('Reset all inventory quantities to healthy levels?')) return;
-            try {
-                const resp = await fetchWithTimeout('/api/admin/reseed-inventory', {
-                    method: 'POST'
-                }, 8000);
-                const d = await resp.json();
-                if (d.ok) {
-                    pushFeed('api', '<strong>Admin</strong>: Inventory reseeded to healthy levels');
-                    alert('\u2713 Inventory reset successfully');
-                } else {
-                    alert('Reseed failed: ' + (d.detail || 'Unknown error'));
-                }
-            } catch (e) {
-                alert('Reseed failed: ' + e.message);
-            }
-        }
-
-        /* ══════════════════════════════════════════════════════════════
-           HELPERS
-        ══════════════════════════════════════════════════════════════ */
-        function fmtUptime(ms) {
-            const s = Math.floor(ms / 1000),
-                m = Math.floor(s / 60),
-                h = Math.floor(m / 60);
-            return h > 0 ? `${h}h ${m % 60}m` : m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
-        }
-
-        function rnd(arr) {
-            return arr[Math.floor(Math.random() * arr.length)];
-        }
-
-        /* ══════════════════════════════════════════════════════════════
-           MAIN POLL LOOP
-           FIXES applied:
-             1. pollInFlight guard — prevents overlapping async polls
-             2. fetchWithTimeout — no more hanging forever
-             3. isDown branch now calls ordersError()/invError() not Loading()
-             4. updateHealth() called on ALL exit paths (success, isDown, catch)
-             5. kc-orders error class cleaned up on recovery
-        ══════════════════════════════════════════════════════════════ */
-        async function poll() {
-            $('footer-time').textContent = new Date().toLocaleTimeString('en-US', {
-                hour12: false
+            // Reseed locally always; try API too if available
+            mockInventory.forEach(it => {
+                it.quantity = Math.floor(it.max_quantity * 0.6 + rand(0, it.max_quantity * 0.3));
             });
-            const uptimeEl = $('set-uptime');
-            if (uptimeEl) uptimeEl.textContent = fmtUptime(Date.now() - startTime);
-
-            try {
-                /* ── 1. Health check ──────────────────────────────────── */
-                const healthResp = await fetchWithTimeout('/api/health', {}, 5000);
-                if (!healthResp.ok) {
-                    throw new Error(`Health endpoint returned ${healthResp.status}`);
-                }
-                const health = await healthResp.json();
-
-                // FIX: always update footer health dots
-                updateHealth(health);
-                // FIX: API is reachable — mark API dot green
-                $('hd-api').className = 'h-dot';
-
-                const isDown = !health.postgres || !health.redis;
-
-                if (isDown) {
-                    consecutiveErrors++;
-                    const state = consecutiveErrors >= 3 ? 'critical' : 'degraded';
-
-                    if (systemHealthy !== false) {
-                        // First time we detect degradation
-                        setSystemState(state);
-                        pushFeed('error',
-                            '<strong>ALERT</strong>: Upstream service failure \u2014 database unreachable');
-                        pushFeed('error',
-                            '<strong>ERROR 502</strong>: Connection refused \u2014 max retries exhausted');
-                    } else {
-                        // Subsequent degraded polls — update state severity if needed
-                        $('sys-dot').className = `status-dot ${state}`;
-                        $('crash-banner').style.display = cfg.alerts ? 'block' : 'none';
-                    }
-                    systemHealthy = false;
-
-                    // FIX: show ERROR states, not loading spinners, when DB is down
-                    ordersError();
-                    invError();
-                    return;
-                }
-
-                /* ── DB is up — reset error counter ──────────────────── */
-                consecutiveErrors = 0;
-                if (systemHealthy === false) {
-                    // Recovery detected
-                    setSystemState('healthy');
-                    if (cfg.recovery) {
-                        pushFeed('login',
-                            '<strong>RECOVERY</strong>: Services restored \u2014 resuming normal operation');
-                    }
-                } else if (systemHealthy === null) {
-                    // First successful poll
-                    setSystemState('healthy');
-                }
-
-                /* ── 2. Dashboard stats ───────────────────────────────── */
-                const dashResp = await fetchWithTimeout('/api/dashboard', {}, 5000);
-                if (!dashResp.ok) {
-                    throw new Error(`Dashboard returned ${dashResp.status}`);
-                }
-                const dash = await dashResp.json();
-                updateKPIs(dash);
-                if (dash.session_id) {
-                    $('session-id').querySelector('span').textContent = dash.session_id.slice(0, 8) + '\u2026';
-                }
-
-                /* ── 3. Orders ────────────────────────────────────────── */
-                const limit = parseInt($('set-limit') ? $('set-limit').value : '10') || 10;
+            refreshInventoryTab();
+            renderInvGrid(mockInventory);
+            pushFeed('api', '<strong>Admin</strong>: Inventory reseeded to healthy levels');
+            if (useRealAPI) {
                 try {
-                    const oResp = await fetchWithTimeout('/api/orders?limit=' + limit, {}, 5000);
-                    if (!oResp.ok) {
-                        ordersError();
-                        pushFeed('error', `<strong>${oResp.status}</strong>: Orders endpoint error`);
-                    } else {
-                        const o = await oResp.json();
-                        allOrders = o.rows || [];
-                        ordersOk(allOrders);
-                        if (o.new_order) {
-                            const x = o.new_order;
-                            pushFeed('order',
-                                `<strong>${x.customer_name}</strong> placed order #${x.order_id} \u2014 $${parseFloat(x.amount).toFixed(2)}`
-                            );
-                        }
-                    }
-                } catch (oErr) {
-                    ordersError();
-                    pushFeed('error', `<strong>ERR</strong>: Orders fetch failed — ${oErr.message}`);
-                }
-
-                /* ── 4. Inventory ─────────────────────────────────────── */
-                try {
-                    const iResp = await fetchWithTimeout('/api/inventory', {}, 5000);
-                    if (!iResp.ok) {
-                        invError();
-                        pushFeed('error', `<strong>${iResp.status}</strong>: Inventory DB query failed`);
-                    } else {
-                        const iv = await iResp.json();
-                        currentInventory = iv.items || [];
-                        invOk(currentInventory);
-                    }
-                } catch (iErr) {
-                    invError();
-                    pushFeed('error', `<strong>ERR</strong>: Inventory fetch failed — ${iErr.message}`);
-                }
-
-                /* ── 5. Refresh active non-dashboard tab ──────────────── */
-                const activeTab = document.querySelector('.nav-tab.active') ? .dataset.tab;
-                if (activeTab === 'orders') refreshOrdersTab();
-                if (activeTab === 'inventory') refreshInventoryTab();
-                if (activeTab === 'analytics') refreshAnalyticsTab();
-
-                /* ── 6. Random feed events ────────────────────────────── */
-                if (cfg.feed) {
-                    if (Math.random() < 0.6) {
-                        const users = ['alice@corp.io', 'bob@tech.co', 'carol@ops.ai', 'dave@nexaops.io',
-                            'erin@saas.com'
-                        ];
-                        const pages = ['/dashboard', '/orders', '/inventory', '/analytics', '/settings'];
-                        pushFeed('login', `<strong>${rnd(users)}</strong> navigated to ${rnd(pages)}`);
-                    }
-                    if (Math.random() < 0.3) {
-                        const acts = ['exported CSV report', 'updated stock threshold', 'approved purchase order',
-                            'ran analytics query'
-                        ];
-                        pushFeed('api', `API call: <strong>${rnd(acts)}</strong>`);
-                    }
-                }
-
-            } catch (err) {
-                // Complete API failure (network down, nginx not running, etc.)
-                consecutiveErrors++;
-                setSystemState('critical');
-                ordersError();
-                invError();
-                // FIX: update all health dots on catch path too
-                updateHealth({
-                    postgres: false,
-                    redis: false
-                });
-                $('hd-api').className = 'h-dot err';
-                $('hl-api').textContent = 'API \u2715';
-                pushFeed('error', `<strong>FATAL</strong>: ${err.message || 'Backend unreachable'}`);
+                    await fetchTimeout('/api/admin/reseed-inventory', {
+                        method: 'POST'
+                    }, 8000);
+                } catch (_) {}
             }
+            alert('\u2713 Inventory reset successfully');
         }
 
-        /* Wrapper that prevents overlapping async polls */
-        async function safePoll() {
-            if (pollInFlight) return;
-            pollInFlight = true;
-            try {
-                await poll();
-            } finally {
-                pollInFlight = false;
-            }
-        }
+        /* ════════════════════════════════════════════════════════
+           INIT
+        ════════════════════════════════════════════════════════ */
+        // Set initial system state
+        setSysState('healthy');
+        updateHealthFooter(true, true, true);
+        updateSourcePill();
 
-        /* ══════════════════════════════════════════════════════════════
-           INIT — show spinners, seed feed, kick off polling
-        ══════════════════════════════════════════════════════════════ */
-        setSystemState('connecting');
-        ordersLoading();
-        invLoading();
+        // Seed initial feed
         pushFeed('login', '<strong>admin@nexaops.io</strong> authenticated \u2014 session started');
         pushFeed('api', '<strong>System</strong>: All services nominal \u2014 100 user sessions active');
+        pushFeed('order', '<strong>System</strong>: Loaded ' + mockOrders.length + ' historical orders');
 
-        // Kick off immediately, then repeat
-        safePoll();
-        pollTimer = setInterval(safePoll, POLL_MS);
+        // First render immediately (no "connecting" wait)
+        runMockTick();
+
+        // Start polling loop
+        pollTimer = setInterval(tick, POLL_MS);
+
+        // Background API discovery — check every 10s silently
+        tryDiscoverAPI();
+        setInterval(tryDiscoverAPI, 10000);
+
+        // Footer time
+        setInterval(() => {
+            $('footer-time').textContent = shortTime();
+        }, 1000);
     </script>
 </body>
 

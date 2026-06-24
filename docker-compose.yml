@@ -154,7 +154,7 @@ services:
     image: confluentinc/cp-kafka:7.7.0
     depends_on:
       kafka:
-        condition: service_started
+        condition: service_healthy
     networks: [ccdt-net]
     restart: "no"
     command:
@@ -162,13 +162,15 @@ services:
       - -c
       - |
         echo 'Creating CCDT Kafka topics ...'
+        sleep 5
         kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ccdt.topology.updates --partitions 1 --replication-factor 1
         kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ccdt.ebpf.events --partitions 4 --replication-factor 1 --config retention.ms=86400000 --config compression.type=lz4 --config max.message.bytes=65536
         kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ccdt.gnn.inference --partitions 2 --replication-factor 1 --config retention.ms=604800000 --config compression.type=gzip
         kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ccdt.guardian.actions --partitions 2 --replication-factor 1 --config retention.ms=2592000000 --config compression.type=gzip
         kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic ccdt.incidents --partitions 2 --replication-factor 1 --config cleanup.policy=compact,delete --config retention.ms=7776000000
-        echo 'All topics created:'
+        echo 'All topics created successfully'
         kafka-topics --bootstrap-server kafka:9092 --list
+        exit 0
     logging: *default-logging
 
   # ── Kafka UI (dev convenience) ─────────────────────────────────────────────
@@ -363,6 +365,7 @@ services:
         condition: service_started
     environment:
       <<: *kafka-env
+      ANTHROPIC_API_KEY:       ${ANTHROPIC_API_KEY}
       GROQ_API_KEY:            ${GROQ_API_KEY}
       GROQ_MODEL:              llama-3.3-70b-versatile
       GEMINI_API_KEY:          ${GEMINI_API_KEY:?Set GEMINI_API_KEY in .env}
@@ -563,6 +566,7 @@ services:
       - "8088:80"
     volumes:
       - ./infra/demo/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./infra/demo/nginx/index.html:/usr/share/nginx/html/index.html:ro
     mem_limit: 256m
     healthcheck:
       <<: *hc-defaults

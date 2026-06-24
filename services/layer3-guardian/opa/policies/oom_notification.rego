@@ -50,6 +50,25 @@ allow if {
     not critical_oom_storm
 }
 
+# ── allow: restart_pod is safe for stateful workloads with memory pressure ────
+# Restarting a stateful service is much safer than changing memory limits
+# Allow autonomous restart for memory pressure scenarios on stateful workloads
+# Either: explicit OOM kills detected, OR high memory usage (>85%)
+allow if {
+    input.action.name == "restart_pod"
+    is_stateful_workload
+    has_memory_pressure
+    not critical_oom_storm
+}
+
+has_memory_pressure if {
+    input.node.oom_kills >= MIN_OOM_KILLS_FOR_AUTO
+}
+
+has_memory_pressure if {
+    input.node.mem >= 85
+}
+
 # ── allow: non-memory actions pass through this policy (other policies apply) ──
 allow if {
     not input.action.name in {"increase_oom_threshold", "restart_pod", "drain_node"}

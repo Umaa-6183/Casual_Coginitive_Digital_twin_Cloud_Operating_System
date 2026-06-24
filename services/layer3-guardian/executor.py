@@ -488,6 +488,11 @@ class ActionPipeline:
                                                                    "status": "warning", "class": "fault", "layer": "service", "oom_kills": 0}
             target_node = node_state.get("id", "unknown")
 
+            # Add incident classification from GNN inference (not in topology)
+            # The incident_type tells us if it's a fault or attack
+            if "class" not in node_state:
+                node_state["class"] = incident_type  # "fault" or "attack"
+
             from opa.evaluator import build_action_input
             opa_input = build_action_input(
                 action_name=result["rl_action_name"],
@@ -518,6 +523,62 @@ class ActionPipeline:
 
             logger.info("[%s] OPA: allowed=%s violations=%d",
                         pipeline_id, opa_result.allowed, len(opa_result.violations))
+
+            # Log detailed violation information when blocked
+            if not opa_result.allowed and opa_result.violations:
+                logger.warning("[%s] OPA BLOCKED: %s", pipeline_id, opa_result.violations)
+                for decision in opa_result.decisions:
+                    if not decision.allowed:
+                        logger.warning("[%s]   Policy '%s' denied: %s",
+                                      pipeline_id, decision.policy, decision.violations)
+
+            # ── Fallback: Try restart_pod for stateful memory scenarios ───────
+            # If increase_oom_threshold was blocked on a stateful workload,
+            # try restart_pod as a safer alternative
+            fallback_used = False
+            oom_kills = node_state.get("oom_kills") or 0
+            mem_usage = node_state.get("mem", 0)
+            has_memory_issue = (oom_kills >= 1) or (mem_usage >= 85)
+
+            if (not opa_result.allowed
+                and result["rl_action_name"] == "increase_oom_threshold"
+                and has_memory_issue):
+
+                logger.info("[%s] FALLBACK: Trying restart_pod instead of increase_oom_threshold",
+                           pipeline_id)
+
+                # Build OPA input for restart_pod
+                restart_opa_input = build_action_input(
+                    action_name="restart_pod",
+                    target_node=target_node,
+                    node_state=node_state,
+                    cluster_state={
+                        "namespace": NAMESPACE,
+                        "nodes": topology.get("nodes", []),
+                        "node_mem_total_gb": 32,
+                    },
+                    context={"autonomy_mode": autonomy_mode},
+                    action_history=[
+                        {"action_name": h["name"], "target_node": target_node,
+                         "age_minutes": (time.time() - h.get("ts", time.time())) / 60}
+                        for h in list(_state["action_history"])[-20:]
+                        if h.get("target") == target_node
+                    ],
+                )
+
+                fallback_opa = await self.opa.evaluate(restart_opa_input)
+                if fallback_opa.allowed:
+                    logger.info("[%s] FALLBACK APPROVED: restart_pod allowed by OPA", pipeline_id)
+                    result["rl_action_name"] = "restart_pod"
+                    result["fallback_from"] = "increase_oom_threshold"
+                    opa_result = fallback_opa
+                    fallback_used = True
+                else:
+                    logger.warning("[%s] FALLBACK BLOCKED: restart_pod also denied", pipeline_id)
+                    logger.warning("[%s] FALLBACK OPA violations: %s", pipeline_id, fallback_opa.violations)
+                    for dec in fallback_opa.decisions:
+                        if not dec.allowed:
+                            logger.warning("[%s]   Fallback policy '%s': %s", pipeline_id, dec.policy, dec.violations)
 
             # ── Stage 4: Execution decision ───────────────────────────────────
             execute_action = (

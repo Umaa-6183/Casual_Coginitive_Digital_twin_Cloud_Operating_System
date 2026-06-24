@@ -163,41 +163,95 @@ export const CopilotTab: React.FC<Props> = () => {
 
       let accumulated = "";
 
-      try {
-        const resp = await fetch(`${API_BASE}/api/v1/copilot/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            session_id: sessionId.current,
-            message: text.trim(),
-            stream: true,
-            context: {},
-          }),
-          signal: controller.signal,
-        });
+      // Retry logic with exponential backoff for 429 errors
+      const maxRetries = 3;
+      let retryCount = 0;
+      let resp: Response | null = null;
 
-        if (!resp.ok) {
+      while (retryCount <= maxRetries) {
+        try {
+          resp = await fetch(`${API_BASE}/api/v1/copilot/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              session_id: sessionId.current,
+              message: text.trim(),
+              stream: true,
+              context: {},
+            }),
+            signal: controller.signal,
+          });
+
+          if (resp.ok) {
+            break; // Success - exit retry loop
+          }
+
+          // Handle 429 rate limit with retry
+          if (resp.status === 429) {
+            const errJson = await resp.json().catch(() => ({}));
+            const retryAfter = errJson.retry_after_seconds || Math.pow(2, retryCount);
+
+            if (retryCount < maxRetries) {
+              console.log(`Rate limited. Retrying in ${retryAfter}s... (attempt ${retryCount + 1}/${maxRetries})`);
+              accumulated = `⏳ Rate limit reached. Retrying in ${Math.ceil(retryAfter)}s...\n`;
+
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last?.role === "assistant") {
+                  updated[updated.length - 1] = { ...last, content: accumulated };
+                }
+                return updated;
+              });
+
+              await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+              retryCount++;
+              continue;
+            }
+          }
+
+          // Other errors - show message and exit
           const errText = await resp.text();
-
           console.warn("API error:", resp.status, errText);
-
-          accumulated += `\n\n⚠️ Service temporarily unavailable (${resp.status}). Please retry.\n`;
+          accumulated += `\n\n⚠️ Service temporarily unavailable (${resp.status}). Please try again.\n`;
 
           setMessages((prev) => {
             const updated = [...prev];
             const last = updated[updated.length - 1];
             if (last?.role === "assistant") {
-              updated[updated.length - 1] = {
-                ...last,
-                content: accumulated,
-              };
+              updated[updated.length - 1] = { ...last, content: accumulated };
             }
             return updated;
           });
 
           setStreaming(false);
-          return; // IMPORTANT: don't throw
+          return;
+
+        } catch (fetchErr) {
+          if (retryCount < maxRetries) {
+            retryCount++;
+            await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+            continue;
+          }
+          throw fetchErr;
         }
+      }
+
+      if (!resp || !resp.ok) {
+        accumulated += `\n\n⚠️ Unable to reach Co-Pilot after ${maxRetries} retries.\n`;
+        setMessages((prev) => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last?.role === "assistant") {
+            updated[updated.length - 1] = { ...last, content: accumulated };
+          }
+          return updated;
+        });
+        setStreaming(false);
+        return;
+      }
+
+      try {
 
         const reader = resp.body!.getReader();
         const decoder = new TextDecoder();

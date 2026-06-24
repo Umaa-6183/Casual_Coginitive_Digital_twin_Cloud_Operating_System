@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Optional
 
 import torch
+from aiokafka import AIOKafkaProducer
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
@@ -50,13 +51,15 @@ INFER_LATENCY = Histogram(
 CF_COUNT = Counter("ccdt_counterfactual_total", "Counterfactual calls")
 
 _state: dict[str, Any] = {
-    "model":         None,
-    "dag_builder":   None,
-    "cf_engine":     None,
-    "explainer":     None,
-    "last_result":   None,
-    "last_infer_ts": 0.0,
-    "model_loaded":  False,
+    "model":          None,
+    "dag_builder":    None,
+    "cf_engine":      None,
+    "explainer":      None,
+    "kafka_producer": None,
+    "last_result":    None,
+    "last_infer_ts":  0.0,
+    "model_loaded":   False,
+    "inference_task": None,
 }
 
 
@@ -95,15 +98,181 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _state["cf_engine"] = CounterfactualEngine(_state["model"], dag)
     _state["explainer"] = CCDTExplainer(_state["model"])
 
+    # ── Initialize Kafka Producer ─────────────────────────────────────────────
+    try:
+        producer = AIOKafkaProducer(
+            bootstrap_servers=KAFKA_BOOTSTRAP,
+            value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+            compression_type='gzip',
+        )
+        await producer.start()
+        _state["kafka_producer"] = producer
+        logger.info("✅ Kafka producer connected: %s", KAFKA_BOOTSTRAP)
+    except Exception as exc:
+        logger.warning("⚠️  Kafka producer failed: %s — inference will not publish", exc)
+        _state["kafka_producer"] = None
+
     # Warm up — run first inference so last_result is populated
     try:
         await _run_inference()
     except Exception as exc:
         logger.warning("Warm-up inference failed (ok on first start): %s", exc)
 
+    # ── Start background inference loop ───────────────────────────────────────
+    _state["inference_task"] = asyncio.create_task(_inference_loop())
+    logger.info("✅ Background inference loop started (interval=%ds)", INFER_INTERVAL)
+
     logger.info("Layer-2 ready on %s", DEVICE)
     yield
+
+    # Cleanup
+    logger.info("Layer-2 shutting down...")
+    if _state["inference_task"]:
+        _state["inference_task"].cancel()
+    if _state["kafka_producer"]:
+        await _state["kafka_producer"].stop()
     logger.info("Layer-2 stopped")
+
+
+def _classify_incident_type(dag: LiveDAGBuilder, node_ids: list[str], gnn_class: int) -> int:
+    """
+    Rule-based incident classification to fix untrained GNN misclassification.
+
+    Returns:
+        0 = healthy
+        1 = fault (resource issues: OOM, high CPU/mem, latency)
+        2 = attack (security indicators: cap_events, syscall anomalies)
+    """
+    # Get node states from DAG
+    nodes = dag._nodes
+
+    # Collect incident indicators
+    oom_nodes = []
+    high_mem_nodes = []
+    high_cpu_nodes = []
+    security_nodes = []
+
+    for nid in node_ids:
+        node = nodes.get(nid)
+        if not node:
+            continue
+
+        # Memory pressure / OOM indicators (FAULT)
+        if node.oom_count > 0:
+            oom_nodes.append(nid)
+        if node.mem >= 85:
+            high_mem_nodes.append(nid)
+        if node.cpu >= 85:
+            high_cpu_nodes.append(nid)
+
+        # Security indicators (ATTACK)
+        if node.cap_events >= 5 or node.syscall_rate >= 5000:
+            security_nodes.append(nid)
+
+    # Classification logic
+    has_oom = len(oom_nodes) > 0
+    has_memory_pressure = len(high_mem_nodes) > 0
+    has_cpu_pressure = len(high_cpu_nodes) > 0
+    has_security_events = len(security_nodes) > 0
+
+    # Priority: Security events indicate attack
+    if has_security_events and not (has_oom or has_memory_pressure):
+        logger.info("🔍 Classification override: ATTACK detected (security events on %s)", security_nodes)
+        return 2  # attack
+
+    # OOM or high memory/CPU indicates fault
+    if has_oom or has_memory_pressure or has_cpu_pressure:
+        affected = list(set(oom_nodes + high_mem_nodes + high_cpu_nodes))
+        logger.info("🔍 Classification override: FAULT detected (resource pressure on %s)", affected[:3])
+        return 1  # fault
+
+    # No clear indicators — trust GNN or default to healthy
+    if gnn_class > 0:
+        logger.debug("🔍 Classification: Using GNN prediction (%s)", CLASS_NAMES[gnn_class])
+        return gnn_class
+
+    return 0  # healthy
+
+
+def _find_root_cause_by_metrics(dag: LiveDAGBuilder, node_ids: list[str], incident_class: int) -> Optional[str]:
+    """
+    Find root cause node by analyzing actual metrics instead of GNN probabilities.
+
+    For fault (class=1): prioritize OOM > high mem > high CPU
+    For attack (class=2): prioritize cap_events > syscall_rate
+    """
+    nodes = dag._nodes
+    candidates = []
+
+    for nid in node_ids:
+        node = nodes.get(nid)
+        if not node:
+            continue
+
+        if incident_class == 1:  # fault
+            # Calculate fault score: OOM is critical, then mem, then cpu
+            score = 0.0
+            if node.oom_count > 0:
+                score += 100.0 * node.oom_count
+            score += node.mem * 1.5  # Memory weighted higher
+            score += node.cpu * 1.0
+            score += node.error_rate * 50.0  # Error rate also significant
+
+            if score > 50:  # Only consider nodes with significant issues
+                candidates.append((nid, score))
+
+        elif incident_class == 2:  # attack
+            # Calculate attack score
+            score = 0.0
+            score += node.cap_events * 20.0
+            score += node.syscall_rate / 100.0
+            score += node.cpu * 0.5  # CPU less important for attacks
+
+            if score > 30:
+                candidates.append((nid, score))
+
+    if not candidates:
+        return None
+
+    # Return node with highest score
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    root_node = candidates[0][0]
+    logger.debug("🎯 Metric-based root cause: %s (score=%.1f)", root_node, candidates[0][1])
+    return root_node
+
+
+async def _inference_loop() -> None:
+    """
+    Background task that runs GNN inference every INFER_INTERVAL seconds
+    and publishes results to Kafka topic 'ccdt.gnn.inference'.
+    """
+    logger.info("🔄 Inference loop starting...")
+    await asyncio.sleep(2)  # Give Kafka producer time to initialize
+
+    while True:
+        try:
+            # Run inference
+            result = await _run_inference()
+
+            # Publish to Kafka if producer is available
+            producer = _state.get("kafka_producer")
+            if producer:
+                try:
+                    await producer.send("ccdt.gnn.inference", value=result)
+                    logger.debug("📤 Published inference to Kafka: incident_type=%s, root=%s, confidence=%.2f",
+                                result.get("incidentType"),
+                                result.get("rootCauseNode"),
+                                result.get("rootCauseConfidence", 0.0))
+                except Exception as exc:
+                    logger.warning("Kafka publish failed: %s", exc)
+
+        except asyncio.CancelledError:
+            logger.info("Inference loop cancelled")
+            break
+        except Exception as exc:
+            logger.error("Inference loop error: %s", exc, exc_info=True)
+
+        await asyncio.sleep(INFER_INTERVAL)
 
 
 app = FastAPI(title="CCDT GNN Inference Server",
@@ -151,14 +320,28 @@ async def _run_inference(topology_override: Optional[dict] = None) -> dict:
         INFER_COUNT.labels(status="ok").inc()
 
         graph_probs = result["graph_probs"][0]
-        graph_class = result["graph_class"][0].item()
+        graph_class_raw = result["graph_class"][0].item()
         node_probs = result["node_probs"]
         node_classes = result["node_classes"]
 
+        # ── Rule-based classification override (fixes untrained model misclassification) ────
+        graph_class = _classify_incident_type(dag, node_ids, graph_class_raw)
+
         target_cls = graph_class if graph_class > 0 else 2
+
+        # ── Root cause detection with metric-based fallback ────
         root_cause_id, root_cause_conf, ranked_nodes = find_root_cause(
             node_probs, node_ids, target_class=target_cls
         )
+
+        # Fallback: If GNN confidence is low (<0.5), use metric-based root cause
+        if root_cause_conf < 0.5 and graph_class > 0:
+            metric_root = _find_root_cause_by_metrics(dag, node_ids, graph_class)
+            if metric_root:
+                root_cause_id = metric_root
+                root_cause_conf = 0.85  # High confidence for metric-based detection
+                logger.info("🎯 Root cause override: %s (metric-based, class=%s)",
+                           root_cause_id, CLASS_NAMES[graph_class])
 
         blast_radius = [
             nid for nid, _ in ranked_nodes

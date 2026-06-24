@@ -12,6 +12,8 @@ const COLORS: Record<Severity, string> = {
   critical: '#FF3B5C',
   warning:  '#FFB800',
   info:     '#00D4FF',
+  success:  '#00FF9F',
+  error:    '#FF3B5C',
 };
 
 export const Toast: React.FC<ToastProps> = ({

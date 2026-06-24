@@ -18,7 +18,7 @@ export const GlowBadge: React.FC<GlowBadgeProps> = ({
   label,
   size = 'sm',
 }) => {
-  const c  = COLORS[severity];
+  const c  = COLORS[severity] || COLORS.info;
   const fs = size === 'sm' ? 9 : 11;
   const px = size === 'sm' ? '5px 8px' : '4px 12px';
 

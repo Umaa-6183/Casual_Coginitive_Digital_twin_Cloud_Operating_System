@@ -2,7 +2,7 @@
 import React from "react";
 export type NodeStatus     = 'healthy' | 'warning' | 'critical';
 export type NodeLayer      = 'network' | 'service' | 'data' | 'system';
-export type Severity       = 'critical' | 'warning' | 'info';
+export type Severity       = 'critical' | 'warning' | 'info' | 'success' | 'error';
 export type IncidentType   = 'attack' | 'fault';
 export type IncidentStatus = 'active' | 'investigating' | 'auto-resolved' | 'resolved';
 export type EdgeType       = 'http' | 'grpc' | 'tcp' | 'probe' | 'kafka';

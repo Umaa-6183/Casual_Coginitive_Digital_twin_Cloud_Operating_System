@@ -34,12 +34,15 @@ services:
       context:    ./mock-api
       dockerfile: Dockerfile
     image:     ccdt/mock-api:dev
-    container_name: ccdt-mock-api-1
     restart:   unless-stopped
     environment:
       # Container-internal ports (5432, 6379) — NOT host-mapped ports (5433, 6380)
       PG_DSN:    "postgresql://ccdt:ccdt@demo-postgres:5432/ccdt"
       REDIS_URL: "redis://demo-redis:6379/0"
+
+      # Phase 2.3: CCDT Integration
+      CCDT_API_GATEWAY: "http://api-gateway:8000"
+      CCDT_INCIDENT_POLL_ENABLED: "true"
     networks:
       - ccdt-net
     depends_on:
@@ -52,7 +55,7 @@ services:
       interval:     10s
       timeout:       5s
       retries:       5
-      start_period: 30s
+      start_period:  30s
     labels:
       com.ccdt.component: "business-facade"
       com.ccdt.role:      "mock-api"
@@ -92,7 +95,6 @@ services:
       context:    ./traffic-gen
       dockerfile: Dockerfile
     image:     ccdt/traffic-gen:dev
-    container_name: ccdt-demo-traffic-gen-1
     restart:   unless-stopped
     environment:
       # Container-internal nginx URL (port 80, NOT host-mapped port 8088)

@@ -50,11 +50,24 @@ export const TopologyMap: React.FC<Props> = ({
     const dst = nodeMap.get(edge.to);
     if (!src || !dst) return null;
 
+    // Validate coordinates exist and are valid numbers (not NaN)
+    if (typeof src.x !== 'number' || typeof src.y !== 'number' ||
+        typeof dst.x !== 'number' || typeof dst.y !== 'number' ||
+        !isFinite(src.x) || !isFinite(src.y) ||
+        !isFinite(dst.x) || !isFinite(dst.y)) {
+      return null;
+    }
+
     // Map from data coords to SVG
     const sx = (src.x / 800) * width;
     const sy = (src.y / 500) * height;
     const dx = (dst.x / 800) * width;
     const dy = (dst.y / 500) * height;
+
+    // Final validation after calculation
+    if (!isFinite(sx) || !isFinite(sy) || !isFinite(dx) || !isFinite(dy)) {
+      return null;
+    }
 
     // Bezier control point
     const mx = (sx + dx) / 2;
@@ -98,10 +111,22 @@ export const TopologyMap: React.FC<Props> = ({
   };
 
   const renderNode = useCallback((node: ServiceNode) => {
+    // Validate coordinates exist and are valid numbers (not NaN)
+    if (typeof node.x !== 'number' || typeof node.y !== 'number' ||
+        !isFinite(node.x) || !isFinite(node.y)) {
+      return null;
+    }
+
     const x = (node.x / 800) * width;
     const y = (node.y / 500) * height;
-    const sc = STATUS_COLORS[node.status];
-    const lc = LAYER_COLORS[node.layer];
+
+    // Final validation after calculation
+    if (!isFinite(x) || !isFinite(y)) {
+      return null;
+    }
+
+    const sc = STATUS_COLORS[node.status] || STATUS_COLORS.healthy;
+    const lc = LAYER_COLORS[node.layer] || LAYER_COLORS.system;
     const selected = node.id === selectedId;
     const R = 28;
 
@@ -140,17 +165,26 @@ export const TopologyMap: React.FC<Props> = ({
 
         {/* CPU bar arc */}
         {(() => {
-          const pct    = node.cpu / 100;
+          // Validate CPU value
+          const cpuValue = typeof node.cpu === 'number' && isFinite(node.cpu) ? node.cpu : 0;
+          const pct    = cpuValue / 100;
           const angle  = pct * 2 * Math.PI;
           const startX = 0;
           const startY = -(R - 2);
           const endX   = Math.sin(angle) * (R - 2);
           const endY   = -Math.cos(angle) * (R - 2);
           const large  = angle > Math.PI ? 1 : 0;
+
+          // CPU-based color (matches MetricBar logic)
+          const cpuColor = cpuValue > 85 ? '#FF3B5C' : cpuValue > 65 ? '#FFB800' : '#00FF9F';
+
+          // Final validation
+          if (!isFinite(endX) || !isFinite(endY)) return null;
+
           return (
             <path
               d={`M ${startX},${startY} A ${R-2},${R-2} 0 ${large} 1 ${endX},${endY}`}
-              fill="none" stroke={sc} strokeWidth={2.5} strokeOpacity={0.7}
+              fill="none" stroke={cpuColor} strokeWidth={2.5} strokeOpacity={0.7}
               strokeLinecap="round"
             />
           );
@@ -166,7 +200,7 @@ export const TopologyMap: React.FC<Props> = ({
         <text y={3} textAnchor="middle" fontSize={10}
           fontFamily="JetBrains Mono, monospace"
           fill={sc} fontWeight="bold">
-          {node.cpu}%
+          {typeof node.cpu === 'number' && isFinite(node.cpu) ? Math.round(node.cpu) : 0}%
         </text>
       </g>
     );

@@ -146,8 +146,17 @@ class DockerActionExecutor:
     def _restart_container(self, target: str, params: dict) -> str:
         """docker restart <container> — fastest remediation for most faults."""
         container = self._get_container(target)
+        old_start = container.attrs.get("State", {}).get("StartedAt", "unknown")
+        logger.info("⚡ EXECUTING RESTART: container=%s old_start=%s",
+                   container.name, old_start)
         container.restart(timeout=10)
-        return f"Container '{container.name}' restarted successfully"
+        # Refresh container state
+        container.reload()
+        new_start = container.attrs.get("State", {}).get("StartedAt", "unknown")
+        logger.info("✅ RESTART COMPLETED: container=%s new_start=%s",
+                   container.name, new_start)
+        return (f"Container '{container.name}' restarted successfully. "
+                f"Old start: {old_start}, New start: {new_start}")
 
     def _isolate_container(self, target: str, params: dict) -> str:
         """
@@ -189,7 +198,11 @@ class DockerActionExecutor:
         """
         container = self._get_container(target)
         new_mem_mb = int(params.get("memory_mb", 512))
+        logger.info("⚡ EXECUTING MEMORY INCREASE: container=%s new_limit=%dMB",
+                   container.name, new_mem_mb)
         container.update(mem_limit=f"{new_mem_mb}m")
+        logger.info("✅ MEMORY INCREASE COMPLETED: container=%s limit=%dMB",
+                   container.name, new_mem_mb)
         return (f"Container '{container.name}' memory limit increased "
                 f"to {new_mem_mb}MB")
 

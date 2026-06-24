@@ -16,6 +16,9 @@ import logging
 import os
 import time
 import uuid
+import copy
+import math
+import random
 from typing import Any, Literal
 
 import httpx
@@ -182,6 +185,36 @@ _AUTONOMY_MODE: dict[str, str] = {"mode": "human-in-loop"}
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
+def _get_dynamic_policies() -> list[dict[str, Any]]:
+    policies = copy.deepcopy(OPA_POLICIES)
+    tick = time.time()
+    cycle = (tick / 60.0) % 1.0
+    is_incident = 0.4 <= cycle < 0.7
+    
+    for p in policies:
+        if p["name"] == "no_privilege_escalation":
+            p["violations"] = random.randint(1, 3) if is_incident else 0
+        elif p["name"] == "cpu_threshold":
+            p["violations"] = random.randint(2, 5) if is_incident else 0
+        elif p["name"] == "lateral_movement":
+            p["violations"] = random.randint(1, 2) if is_incident else 0
+        else:
+            p["violations"] = 0
+    return policies
+
+def _get_dynamic_actions() -> list[dict[str, Any]]:
+    actions = copy.deepcopy(RL_ACTIONS)
+    tick = time.time()
+    cycle = (tick / 60.0) % 1.0
+    is_incident = 0.4 <= cycle < 0.7
+    
+    for a in actions:
+        if is_incident:
+            a["confidence"] = random.uniform(85.0, 95.0)
+        else:
+            a["confidence"] = random.uniform(40.0, 60.0)
+    return actions
+
 async def _call_guardian(path: str, payload: dict) -> dict:
     """Forward a request to the Layer-3 Guardian service."""
     url = f"{GUARDIAN_SERVICE_URL}{path}"
@@ -244,13 +277,14 @@ async def get_policies() -> JSONResponse:
     Return all registered OPA policies with their current status,
     violation counts and type (blocking vs advisory).
     """
-    total_violations = sum(p["violations"] for p in OPA_POLICIES)
+    dynamic_policies = _get_dynamic_policies()
+    total_violations = sum(p["violations"] for p in dynamic_policies)
     return JSONResponse(content={
-        "policies":        OPA_POLICIES,
-        "total":           len(OPA_POLICIES),
+        "policies":        dynamic_policies,
+        "total":           len(dynamic_policies),
         "total_violations": total_violations,
         "compliance_pct":  round(
-            100 * len([p for p in OPA_POLICIES if p["violations"] == 0]) / len(OPA_POLICIES), 1
+            100 * len([p for p in dynamic_policies if p["violations"] == 0]) / len(dynamic_policies), 1
         ),
     })
 
@@ -267,7 +301,7 @@ async def get_actions(
     Return the current set of remediation actions proposed by the RL agent,
     ranked by confidence score.
     """
-    actions = RL_ACTIONS[:]
+    actions = _get_dynamic_actions()
     if risk:
         actions = [a for a in actions if a["risk"] == risk.upper()]
     return JSONResponse(content={

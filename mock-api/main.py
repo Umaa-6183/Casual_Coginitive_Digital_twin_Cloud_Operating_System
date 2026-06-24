@@ -25,6 +25,7 @@ nginx proxies /api/* → http://mock-api:8089
 """
 
 from __future__ import annotations
+from fastapi import Request
 
 import os
 import time
@@ -37,8 +38,10 @@ from contextlib import asynccontextmanager
 
 import asyncpg
 import redis.asyncio as aioredis
+import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,9 +55,15 @@ PG_DSN = os.getenv(
     "PG_DSN",    "postgresql://ccdt:ccdt@demo-postgres:5432/ccdt")
 REDIS_URL = os.getenv("REDIS_URL", "redis://demo-redis:6379/0")
 
+# CCDT Integration — Phase 2.3
+CCDT_API_GATEWAY = os.getenv("CCDT_API_GATEWAY", "http://api-gateway:8000")
+CCDT_INCIDENT_POLL_ENABLED = os.getenv("CCDT_INCIDENT_POLL_ENABLED", "true").lower() == "true"
+
 # ── Globals ────────────────────────────────────────────────────────────────────
 pg_pool:      asyncpg.Pool | None = None
 redis_client: aioredis.Redis | None = None
+ccdt_active_incident: dict | None = None  # Cache for active incident
+ccdt_last_check: float = 0.0  # Timestamp of last CCDT check
 
 
 # ── Lifespan ───────────────────────────────────────────────────────────────────
@@ -195,7 +204,7 @@ async def _seed_orders(conn: asyncpg.Connection) -> None:
         amount = round(base + random.uniform(-50, 200), 2)
         status = random.choice(statuses)
         offset = random.randint(0, 86400)
-        ts = datetime.utcnow() - timedelta(seconds=offset)
+        ts = datetime.utcnow() - timedelta(seconds=random.randint(0, 3600))
         rows.append((cust, prod, amount, status, ts))
 
     await conn.executemany(
@@ -216,12 +225,110 @@ def _redis_ok() -> bool:
     return redis_client is not None
 
 
+# ── CCDT Integration (Phase 2.3) ───────────────────────────────────────────────
+async def fetch_ccdt_active_incident() -> dict | None:
+    """
+    Fetch the currently active CRITICAL incident from CCDT API Gateway.
+    Returns incident dict if found, else None.
+    Caches result for 2 seconds to avoid hammering CCDT backend.
+    """
+    global ccdt_active_incident, ccdt_last_check
+
+    if not CCDT_INCIDENT_POLL_ENABLED:
+        return None
+
+    now = time.time()
+    # Cache for 2 seconds
+    if now - ccdt_last_check < 2.0:
+        return ccdt_active_incident
+
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            response = await client.get(
+                f"{CCDT_API_GATEWAY}/api/incidents",
+                params={"status": "active", "limit": 1}
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                incidents = data.get("incidents", data.get("rows", []))
+
+                if incidents:
+                    incident = incidents[0]
+                    # Only simulate failure for CRITICAL incidents
+                    if incident.get("severity") == "critical":
+                        ccdt_active_incident = incident
+                        ccdt_last_check = now
+                        log.warning(
+                            "🔴 CCDT CRITICAL incident detected: %s (ID: %s)",
+                            incident.get("title", "Unknown"),
+                            incident.get("id", "N/A")
+                        )
+                        return incident
+
+                # No critical incident - clear cache
+                if ccdt_active_incident:
+                    log.info("✅ CCDT incident resolved - resuming normal operations")
+                ccdt_active_incident = None
+                ccdt_last_check = now
+                return None
+
+    except Exception as exc:
+        # CCDT API unreachable - fail open (don't break mock-api)
+        log.debug("CCDT incident check failed (fail-open): %s", exc)
+        ccdt_active_incident = None
+        ccdt_last_check = now
+
+    return None
+
+
 # ── GET /api/health ────────────────────────────────────────────────────────────
 @app.get("/api/health")
 async def health() -> dict:
+    """
+    Health check endpoint.
+
+    Phase 2.3 Enhancement: If CCDT has detected a CRITICAL incident affecting
+    postgres or redis, simulate service degradation by returning unhealthy status.
+    This makes the NexaOps UI visibly break when CCDT Guardian is working.
+    """
     result = {"postgres": False, "redis": False,
               "ts": datetime.utcnow().isoformat()}
 
+    # Phase 2.3: Check if CCDT has active critical incident
+    incident = await fetch_ccdt_active_incident()
+
+    if incident:
+        # Simulate service failure based on incident root cause
+        root_cause = incident.get("root_cause", "").lower()
+        affected = incident.get("affected", "").lower()
+
+        # If postgres is the root cause or in blast radius, mark it unhealthy
+        if "postgres" in root_cause or "postgres" in affected or "demo-postgres" in root_cause:
+            result["postgres"] = False
+            result["ccdt_incident"] = incident.get("id")
+            result["ccdt_message"] = incident.get("title", "Service degraded")
+            log.warning("❌ Simulating postgres failure due to CCDT incident %s", incident.get("id"))
+
+        # If redis is the root cause or in blast radius, mark it unhealthy
+        if "redis" in root_cause or "redis" in affected or "demo-redis" in root_cause:
+            result["redis"] = False
+            result["ccdt_incident"] = incident.get("id")
+            result["ccdt_message"] = incident.get("title", "Service degraded")
+            log.warning("❌ Simulating redis failure due to CCDT incident %s", incident.get("id"))
+
+        # If it's a broad failure (OOM cascade, network partition), fail both
+        if any(keyword in incident.get("description", "").lower()
+               for keyword in ["cascade", "network", "partition", "critical"]):
+            result["postgres"] = False
+            result["redis"] = False
+            result["ccdt_incident"] = incident.get("id")
+            result["ccdt_message"] = incident.get("title", "Service degraded")
+
+        # Return 503 Service Unavailable during active incident
+        return JSONResponse(status_code=503, content=result)
+
+    # Normal health check when no CCDT incident
     try:
         if _pg_ok():
             async with pg_pool.acquire() as conn:
@@ -243,6 +350,15 @@ async def health() -> dict:
 # ── GET /api/dashboard ─────────────────────────────────────────────────────────
 @app.get("/api/dashboard")
 async def dashboard() -> dict:
+    # Phase 2.3: Simulate failure during CCDT incident
+    incident = await fetch_ccdt_active_incident()
+    if incident:
+        log.warning("🔴 Dashboard unavailable during CCDT incident %s", incident.get("id"))
+        raise HTTPException(
+            status_code=503,
+            detail=f"Service degraded: {incident.get('title', 'CCDT incident active')}"
+        )
+
     if not _pg_ok():
         raise HTTPException(
             status_code=503, detail="Database pool not initialised")
@@ -272,7 +388,7 @@ async def dashboard() -> dict:
         async with pg_pool.acquire() as conn:
             revenue = await conn.fetchval(
                 "SELECT COALESCE(SUM(amount), 0) FROM mock_orders "
-                "WHERE status = 'fulfilled' AND created_at > NOW() - INTERVAL '24 hours'"
+                "WHERE status = 'fulfilled'"
             )
             active_orders = await conn.fetchval(
                 "SELECT COUNT(*) FROM mock_orders WHERE status IN ('pending', 'fulfilled')"
@@ -320,6 +436,15 @@ async def dashboard() -> dict:
 # ── GET /api/orders ────────────────────────────────────────────────────────────
 @app.get("/api/orders")
 async def orders(limit: int = Query(default=10, le=50)) -> dict:
+    # Phase 2.3: Simulate failure during CCDT incident
+    incident = await fetch_ccdt_active_incident()
+    if incident:
+        log.warning("🔴 Orders endpoint unavailable during CCDT incident %s", incident.get("id"))
+        raise HTTPException(
+            status_code=502,
+            detail=f"Bad Gateway: {incident.get('title', 'Database unreachable')}"
+        )
+
     if not _pg_ok():
         raise HTTPException(
             status_code=503, detail="Database pool not initialised")
@@ -372,6 +497,15 @@ async def orders(limit: int = Query(default=10, le=50)) -> dict:
 # ── GET /api/inventory ─────────────────────────────────────────────────────────
 @app.get("/api/inventory")
 async def inventory() -> dict:
+    # Phase 2.3: Simulate failure during CCDT incident
+    incident = await fetch_ccdt_active_incident()
+    if incident:
+        log.warning("🔴 Inventory endpoint unavailable during CCDT incident %s", incident.get("id"))
+        raise HTTPException(
+            status_code=503,
+            detail=f"Service Unavailable: {incident.get('title', 'PostgreSQL connection lost')}"
+        )
+
     if not _pg_ok():
         raise HTTPException(
             status_code=503, detail="Database pool not initialised")
@@ -450,7 +584,13 @@ async def logout(body: dict) -> dict:
         return {"ok": False}
 
 
+@app.post("/login")
+async def login_compat(request: Request):
+    body = await request.json()
+    return await login(body)
+
 # ── POST /api/admin/reseed-inventory ──────────────────────────────────────────
+
 @app.post("/api/admin/reseed-inventory")
 async def reseed_inventory() -> dict:
     """
@@ -471,12 +611,108 @@ async def reseed_inventory() -> dict:
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+# ── GET /api/ccdt/incident ────────────────────────────────────────────────────
+@app.get("/api/ccdt/incident")
+async def get_ccdt_incident() -> dict:
+    """
+    Phase 2.3: Expose CCDT active incident status.
+    This endpoint allows the frontend to check if CCDT is currently
+    detecting/healing an incident.
+    """
+    incident = await fetch_ccdt_active_incident()
+    if incident:
+        return {
+            "has_incident": True,
+            "incident": {
+                "id": incident.get("id"),
+                "title": incident.get("title"),
+                "severity": incident.get("severity"),
+                "incident_type": incident.get("incident_type"),
+                "root_cause": incident.get("root_cause"),
+                "affected": incident.get("affected"),
+                "status": incident.get("status"),
+                "created_at": incident.get("created_at"),
+                "gnn_confidence": incident.get("gnn_confidence"),
+                "action_taken": incident.get("action_taken"),
+                "description": incident.get("description"),
+            }
+        }
+    return {"has_incident": False, "incident": None}
+
+
 # ── GET /ready ─────────────────────────────────────────────────────────────────
 @app.get("/ready")
 async def ready() -> dict:
     """Docker / nginx readiness probe."""
     return {"status": "ok"}
 
+
+# ── Compatibility routes (NO /api prefix) ─────────────────────────────
+
+
+@app.get("/dashboard")
+async def dashboard_compat():
+    return await dashboard()
+
+
+@app.get("/orders")
+async def orders_compat(limit: int = 10):
+    return await orders(limit)
+
+
+@app.get("/inventory")
+async def inventory_compat():
+    return await inventory()
+
+
+@app.get("/health")
+async def health_compat():
+    return await health()
+
+# ── CCDT Proxy Routes ──────────────────────────────────────────────────────────
+# Note: nginx strips /api/ prefix, so /api/topology reaches here as /topology
+@app.get("/topology")
+async def topology_proxy():
+    """Proxy topology requests to Layer-2 GNN service."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get("http://layer2-gnn:8001/topology")
+            return JSONResponse(content=response.json(), status_code=response.status_code)
+    except Exception as exc:
+        log.error("Topology proxy error: %s", exc)
+        raise HTTPException(status_code=502, detail=f"GNN service unavailable: {exc}")
+
+@app.get("/incidents")
+async def incidents_proxy(
+    status: str | None = Query(None),
+    limit: int = Query(50, le=200)
+):
+    """Proxy incidents requests to API Gateway."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            params = {"limit": limit}
+            if status:
+                params["status"] = status
+            response = await client.get(
+                f"{CCDT_API_GATEWAY}/api/v1/incidents",
+                params=params
+            )
+            return JSONResponse(content=response.json(), status_code=response.status_code)
+    except Exception as exc:
+        log.error("Incidents proxy error: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Incidents API unavailable: {exc}")
+
+@app.get("/metrics/docker")
+async def cadvisor_proxy():
+    """Proxy cAdvisor metrics requests."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get("http://cadvisor:8080/api/v1.3/docker")
+            return JSONResponse(content=response.json(), status_code=response.status_code)
+    except Exception as exc:
+        log.debug("cAdvisor proxy error (fail-open): %s", exc)
+        # Return empty metrics on failure - integration layer will use mock data
+        return JSONResponse(content={})
 
 # ── Dev entrypoint ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":

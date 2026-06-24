@@ -81,34 +81,45 @@ _incident_counter = 3000  # next numeric ID — simulator starts at 3001
 
 
 def _seed_incidents() -> None:
-    """Load a small set of seed incidents so the UI is non-empty on cold start."""
+    """Load incidents from SQLite or seed with default data."""
+    try:
+        from database import db as _db
+        # Try to load existing incidents from SQLite
+        existing = _db.list_incidents(limit=100)
+        if existing:
+            logger.info("✅ Loaded %d incidents from SQLite", len(existing))
+            for inc in existing:
+                _INCIDENTS[inc["id"]] = inc
+            return
+    except Exception as exc:
+        logger.warning("⚠️ Failed to load incidents from SQLite: %s", exc)
+
+    # If no incidents in SQLite, create seed incident
     import time as _time
     now = int(_time.time())
-    seeds = [
-        {
-            "id": "INC-2999",
-            "title": "Cold-start seed — awaiting live simulator data",
-            "severity": "info",
-            "status": "resolved",
-            "type": "fault",
-            "opened": "00:00:00",
-            "elapsed": "00:00:00",
-            "mttrTarget": "00:30:00",
-            "node": "api-gw",
-            "rootCause": "Simulator not yet connected. Start the simulator to see live incidents.",
-            "affected": [],
-            "confidence": 0.0,
-            "autoAction": "",
-            "createdAt": now - 300,
-            "updatedAt": now - 300,
-            "timeline": [
-                {"time": "00:00:00",
-                    "event": "System initialising — simulator starting", "icon": "ℹ️"},
-            ],
-        }
-    ]
-    for s in seeds:
-        _INCIDENTS[s["id"]] = s
+    seed = {
+        "id": "INC-2999",
+        "title": "Cold-start seed — awaiting live simulator data",
+        "severity": "info",
+        "status": "resolved",
+        "type": "fault",
+        "opened": "00:00:00",
+        "elapsed": "00:00:00",
+        "mttrTarget": "00:30:00",
+        "node": "api-gw",
+        "rootCause": "Simulator not yet connected. Start the simulator to see live incidents.",
+        "affected": [],
+        "confidence": 0.0,
+        "autoAction": "",
+        "createdAt": now - 300,
+        "updatedAt": now - 300,
+        "timeline": [
+            {"time": "00:00:00",
+                "event": "System initialising — simulator starting", "icon": "ℹ️"},
+        ],
+    }
+    _INCIDENTS[seed["id"]] = seed
+    logger.info("✅ Seeded default incident (no existing data)")
 
 
 _seed_incidents()
@@ -134,6 +145,11 @@ def ingest_simulator_incident(payload: dict) -> str:
     now = int(time.time())
     inc_id = payload.get("incident_id", _next_id())
     status = payload.get("status", "active")
+
+    # Remove seed incident when first real incident arrives
+    if "INC-2999" in _INCIDENTS:
+        del _INCIDENTS["INC-2999"]
+        logger.info("✅ Removed seed incident - simulator now connected")
 
     # Auto-resolve old active incidents when a new one arrives
     for old_inc in list(_INCIDENTS.values()):
@@ -176,14 +192,19 @@ def ingest_simulator_incident(payload: dict) -> str:
             ), "event": "Guardian RL agent evaluating remediation options", "icon": "🛡"},
         ],
     }
-    logger.info("Simulator incident ingested: %s (%s)",
+    logger.info("✅ Simulator incident ingested: %s (%s)",
                 inc_id, payload.get("severity"))
-    # Persist to SQLite
+
+    # Persist to SQLite with better error handling
     try:
         from database import db as _db
         _db.save_incident(_INCIDENTS[inc_id])
+        logger.debug("💾 Incident %s persisted to SQLite", inc_id)
+    except AttributeError as exc:
+        logger.warning("⚠️ SQLite save_incident method not found: %s", exc)
     except Exception as exc:
-        logger.debug("SQLite persist failed: %s", exc)
+        logger.warning("⚠️ SQLite persist failed for %s: %s", inc_id, exc)
+
     return inc_id
 
 
@@ -211,6 +232,13 @@ async def list_incidents(
     """
     results: list[dict] = list(_INCIDENTS.values())
 
+    # Log incident counts by status (for debugging)
+    status_counts = {}
+    for inc in results:
+        s = inc.get("status", "unknown")
+        status_counts[s] = status_counts.get(s, 0) + 1
+    logger.debug("📊 Incidents by status: %s (total=%d)", status_counts, len(results))
+
     # Sort newest first (by createdAt descending)
     results.sort(key=lambda x: x.get("createdAt", 0), reverse=True)
 
@@ -226,6 +254,8 @@ async def list_incidents(
 
     total = len(results)
     page = results[offset: offset + limit]
+
+    logger.debug("📤 Returning %d incidents (filter: status=%s)", len(page), status or 'all')
 
     return JSONResponse(content={
         "incidents": page,
@@ -309,6 +339,15 @@ async def create_incident(body: IncidentCreate) -> JSONResponse:
         "timeline":   [e.model_dump() for e in body.timeline],
     }
     _INCIDENTS[inc_id] = record
+
+    # Persist to SQLite
+    try:
+        from database import db as _db
+        _db.save_incident(record)
+        logger.debug("💾 Incident %s persisted to SQLite", inc_id)
+    except Exception as exc:
+        logger.warning("⚠️ SQLite persist failed for %s: %s", inc_id, exc)
+
     logger.info("Incident created: %s (%s)", inc_id, body.severity)
     return JSONResponse(status_code=201, content=record)
 
@@ -352,6 +391,15 @@ async def patch_status(incident_id: str, body: StatusPatch) -> JSONResponse:
 
     _INCIDENTS[incident_id]["status"] = body.status
     _INCIDENTS[incident_id]["updatedAt"] = int(time.time())
+
+    # Persist to SQLite
+    try:
+        from database import db as _db
+        _db.update_incident_status(incident_id, body.status)
+        logger.debug("💾 Incident %s status updated in SQLite", incident_id)
+    except Exception as exc:
+        logger.warning("⚠️ SQLite status update failed for %s: %s", incident_id, exc)
+
     logger.info("Incident %s status → %s", incident_id, body.status)
     return JSONResponse(content={
         "id":     incident_id,
@@ -381,6 +429,14 @@ async def append_timeline(incident_id: str, body: TimelineAppend) -> JSONRespons
     }
     _INCIDENTS[incident_id]["timeline"].append(event)
     _INCIDENTS[incident_id]["updatedAt"] = int(time.time())
+
+    # Persist to SQLite
+    try:
+        from database import db as _db
+        _db.append_timeline(incident_id, body.event, body.icon)
+        logger.debug("💾 Timeline event added to SQLite for %s", incident_id)
+    except Exception as exc:
+        logger.warning("⚠️ SQLite timeline append failed for %s: %s", incident_id, exc)
 
     return JSONResponse(
         status_code=201,

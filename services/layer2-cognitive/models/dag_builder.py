@@ -292,10 +292,15 @@ class LiveDAGBuilder:
 
     def _load_seed_topology(self) -> None:
         """Load seed topology for offline/dev mode."""
-        for n in SEED_NODES:
+        # Distribute nodes across worker nodes
+        node_names = ["node-01", "node-02", "node-03"]
+
+        for idx, n in enumerate(SEED_NODES):
             self._nodes[n["id"]] = NodeState(
                 node_id=n["id"],
                 label=n["label"],
+                namespace="default",
+                node_name=node_names[idx % len(node_names)],  # Round-robin distribution
                 layer=n.get("layer", "service"),
                 is_critical=n.get("is_critical", False),
                 cpu=n.get("cpu", 0),
@@ -463,6 +468,54 @@ class LiveDAGBuilder:
                 return nid
         return None
 
+    def _calculate_layout(self) -> dict[str, tuple[float, float]]:
+        """
+        Calculate layout positions for nodes using hierarchical layering.
+        Returns dict mapping node_id → (x, y) coordinates.
+        """
+        if self._nx_graph is None or len(self._nx_graph.nodes) == 0:
+            return {}
+
+        # Group nodes by layer
+        layer_groups: dict[str, list[str]] = defaultdict(list)
+        for nid in self._nodes.keys():
+            layer = self._nodes[nid].layer
+            layer_groups[layer].append(nid)
+
+        # Layer vertical positions (y-coordinates)
+        layer_order = ["network", "service", "data", "system"]
+        layer_y = {
+            "network": 80,
+            "service": 200,
+            "data":    320,
+            "system":  440,
+        }
+
+        positions = {}
+        canvas_width = 800
+        margin = 100
+
+        for layer in layer_order:
+            nodes_in_layer = layer_groups.get(layer, [])
+            if not nodes_in_layer:
+                continue
+
+            # Distribute nodes evenly across width
+            n = len(nodes_in_layer)
+            if n == 1:
+                x_positions = [canvas_width / 2]
+            else:
+                spacing = (canvas_width - 2 * margin) / (n - 1)
+                x_positions = [margin + i * spacing for i in range(n)]
+
+            # Sort nodes alphabetically for consistent layout
+            nodes_in_layer.sort()
+
+            for i, nid in enumerate(nodes_in_layer):
+                positions[nid] = (x_positions[i], layer_y[layer])
+
+        return positions
+
     # ─── Graph construction ──────────────────────────────────────────────────
 
     def _build_dag(self) -> None:
@@ -564,11 +617,203 @@ class LiveDAGBuilder:
                 self._build_dag()
             return self._nx_graph
 
+    def _apply_dynamic_state_mutations(self) -> None:
+        """
+        Apply time-based dynamic state mutations to simulate realistic incident cycles.
+        This creates a demo-friendly experience where issues appear and resolve automatically.
+
+        Cycle timeline (90 second cycle):
+        0.0 - 0.22: All healthy baseline (20s)
+        0.22 - 0.44: Incident building up (warning phase) (20s)
+        0.44 - 0.67: Full incident (critical phase) (20s)
+        0.67 - 0.89: Recovery phase (critical -> warning -> healthy) (20s)
+        0.89 - 1.0: Stable healthy (10s)
+
+        Between scenarios: 30 second healthy gap for demo clarity
+        """
+        import random
+
+        tick = time.time()
+
+        # 3-minute meta-cycle: 90s incident + 90s healthy gap
+        meta_cycle = (tick / 180.0) % 1.0
+
+        # If in first half (0.0-0.5), run incident cycle. If second half (0.5-1.0), stay healthy
+        if meta_cycle < 0.5:
+            cycle = meta_cycle * 2  # Scale 0.0-0.5 to 0.0-1.0
+        else:
+            cycle = 0.0  # Healthy baseline
+
+        scenario_cycle = int(tick / 540.0) % 3  # Switch scenarios every 9 minutes (3 full cycles)
+
+        # Phase determination
+        is_building = 0.22 <= cycle < 0.44
+        is_critical = 0.44 <= cycle < 0.67
+        is_recovery = 0.67 <= cycle < 0.89
+
+        for node_id, node in self._nodes.items():
+            # Save baseline if not set
+            if not hasattr(node, '_baseline_cpu'):
+                node._baseline_cpu = node.cpu if node.cpu > 0 else 30.0
+                node._baseline_mem = node.mem if node.mem > 0 else 40.0
+
+            base_cpu = node._baseline_cpu
+            base_mem = node._baseline_mem
+            restarts = 0
+
+            # Scenario 1: Database overload cascade
+            if scenario_cycle == 0:
+                if node_id == "order-svc":
+                    if is_building:
+                        progress = (cycle - 0.25) / 0.15
+                        base_cpu = node._baseline_cpu + (60.0 * progress)
+                        base_mem = node._baseline_mem + (45.0 * progress)
+                    elif is_critical:
+                        base_cpu = 88.0 + random.uniform(-3, 7)
+                        base_mem = 88.0 + random.uniform(-3, 7)
+                        restarts = random.randint(2, 4)
+                    elif is_recovery:
+                        progress = (cycle - 0.65) / 0.20
+                        base_cpu = 88.0 - (58.0 * progress)
+                        base_mem = 88.0 - (48.0 * progress)
+
+                elif node_id == "postgres":
+                    if 0.30 <= cycle < 0.45:
+                        progress = (cycle - 0.30) / 0.15
+                        base_cpu = node._baseline_cpu + (55.0 * progress)
+                        base_mem = node._baseline_mem + (48.0 * progress)
+                    elif 0.45 <= cycle < 0.65:
+                        base_cpu = 92.0 + random.uniform(-2, 3)
+                        base_mem = 93.0 + random.uniform(-3, 2)
+                        restarts = random.randint(1, 3)
+                    elif is_recovery:
+                        progress = (cycle - 0.65) / 0.20
+                        base_cpu = 92.0 - (52.0 * progress)
+                        base_mem = 93.0 - (43.0 * progress)
+
+                elif node_id == "notify-svc":
+                    if 0.35 <= cycle < 0.50:
+                        progress = (cycle - 0.35) / 0.15
+                        base_cpu = node._baseline_cpu + (40.0 * progress)
+                        base_mem = node._baseline_mem + (28.0 * progress)
+                    elif 0.50 <= cycle < 0.65:
+                        base_cpu = 70.0 + random.uniform(-3, 5)
+                        base_mem = 78.0 + random.uniform(-3, 5)
+                        restarts = random.randint(1, 2)
+                    elif 0.65 <= cycle < 0.80:
+                        progress = (cycle - 0.65) / 0.15
+                        base_cpu = 70.0 - (40.0 * progress)
+                        base_mem = 78.0 - (30.0 * progress)
+
+            # Scenario 2: Payment service memory leak
+            elif scenario_cycle == 1:
+                if node_id == "payment-svc":
+                    if is_building:
+                        progress = (cycle - 0.25) / 0.15
+                        base_mem = node._baseline_mem + (50.0 * progress)
+                        base_cpu = node._baseline_cpu + (32.0 * progress)
+                    elif is_critical:
+                        base_mem = 93.0 + random.uniform(-2, 2)
+                        base_cpu = 68.0 + random.uniform(-3, 7)
+                        restarts = random.randint(2, 5)
+                    elif is_recovery:
+                        progress = (cycle - 0.65) / 0.20
+                        base_mem = 93.0 - (53.0 * progress)
+                        base_cpu = 68.0 - (30.0 * progress)
+
+                elif node_id == "postgres":
+                    if 0.30 <= cycle < 0.45:
+                        progress = (cycle - 0.30) / 0.15
+                        base_cpu = node._baseline_cpu + (32.0 * progress)
+                    elif 0.45 <= cycle < 0.65:
+                        base_cpu = 70.0 + random.uniform(-3, 5)
+                        base_mem = 77.0 + random.uniform(-2, 5)
+                    elif 0.65 <= cycle < 0.80:
+                        progress = (cycle - 0.65) / 0.15
+                        base_cpu = 70.0 - (30.0 * progress)
+                        base_mem = 77.0 - (27.0 * progress)
+
+            # Scenario 3: Auth service under attack
+            elif scenario_cycle == 2:
+                if node_id == "auth-svc":
+                    if is_building:
+                        progress = (cycle - 0.25) / 0.15
+                        base_cpu = node._baseline_cpu + (58.0 * progress)
+                        base_mem = node._baseline_mem + (42.0 * progress)
+                    elif is_critical:
+                        base_cpu = 90.0 + random.uniform(-2, 5)
+                        base_mem = 86.0 + random.uniform(-3, 9)
+                        restarts = random.randint(1, 3)
+                    elif is_recovery:
+                        progress = (cycle - 0.65) / 0.20
+                        base_cpu = 90.0 - (60.0 * progress)
+                        base_mem = 86.0 - (46.0 * progress)
+
+                elif node_id == "api-gw":
+                    if 0.30 <= cycle < 0.45:
+                        progress = (cycle - 0.30) / 0.15
+                        base_cpu = node._baseline_cpu + (32.0 * progress)
+                    elif 0.45 <= cycle < 0.65:
+                        base_cpu = 70.0 + random.uniform(-3, 5)
+                    elif 0.65 <= cycle < 0.80:
+                        progress = (cycle - 0.65) / 0.15
+                        base_cpu = 70.0 - (28.0 * progress)
+
+            # Apply mutations
+            node.cpu = max(5, min(99, base_cpu))
+            node.mem = max(10, min(99, base_mem))
+            node.restarts = restarts
+
+            # Add small random variation for realism
+            if not (is_building or is_critical or is_recovery):
+                node.cpu += random.uniform(-3, 3)
+                node.mem += random.uniform(-2, 2)
+                node.cpu = max(5, min(99, node.cpu))
+                node.mem = max(10, min(99, node.mem))
+
+        # Update edges based on node states
+        for (src, dst), edge in self._edges.items():
+            src_node = self._nodes.get(src)
+            dst_node = self._nodes.get(dst)
+
+            if src_node and dst_node:
+                src_critical = src_node.cpu > 85 or src_node.mem > 90
+                dst_critical = dst_node.cpu > 85 or dst_node.mem > 90
+                src_warning = src_node.cpu > 65 or src_node.mem > 75
+                dst_warning = dst_node.cpu > 65 or dst_node.mem > 75
+
+                edge.is_causal = src_critical or dst_critical
+
+                if edge.is_causal:
+                    edge.latency_ms = round(random.uniform(80.0, 250.0), 1)
+                    edge.error_rate = round(random.uniform(0.08, 0.18), 3)
+                    edge.request_rate = edge.request_rate * random.uniform(0.3, 0.6) if edge.request_rate > 0 else 100
+                elif src_warning or dst_warning:
+                    edge.latency_ms = round(random.uniform(20.0, 60.0), 1)
+                    edge.error_rate = round(random.uniform(0.01, 0.04), 3)
+                    edge.request_rate = edge.request_rate * random.uniform(0.7, 0.9) if edge.request_rate > 0 else 100
+                else:
+                    # Restore to baseline
+                    if not hasattr(edge, '_baseline_latency'):
+                        edge._baseline_latency = edge.latency_ms if edge.latency_ms > 0 else 5.0
+                        edge._baseline_error = edge.error_rate if edge.error_rate > 0 else 0.001
+                        edge._baseline_requests = edge.request_rate if edge.request_rate > 0 else 100
+
+                    edge.latency_ms = edge._baseline_latency + random.uniform(-2, 2)
+                    edge.error_rate = edge._baseline_error + random.uniform(-0.0005, 0.0005)
+                    edge.request_rate = edge._baseline_requests
+
     async def get_topology_dict(self) -> dict[str, Any]:
         """Return the topology as a JSON-serialisable dict (for /topology API)."""
         async with self._lock:
             if self._dirty:
                 self._build_dag()
+
+            # Apply dynamic state mutations for demo purposes
+            self._apply_dynamic_state_mutations()
+
+        # Calculate layout positions using spring layout
+        layout_pos = self._calculate_layout()
 
         nodes_out = []
         for nid, n in self._nodes.items():
@@ -578,9 +823,14 @@ class LiveDAGBuilder:
             elif n.cpu > 70 or n.mem > 70 or n.error_rate > 0.05:
                 status = "warning"
 
+            # Get layout position (x, y)
+            pos = layout_pos.get(nid, (400, 250))
+
             nodes_out.append({
                 "id":        nid,
                 "label":     n.label,
+                "x":         round(pos[0], 1),
+                "y":         round(pos[1], 1),
                 "namespace": n.namespace,
                 "nodeName":  n.node_name,
                 "layer":     n.layer,

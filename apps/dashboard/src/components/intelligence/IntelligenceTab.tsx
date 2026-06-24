@@ -6,19 +6,12 @@ import { Settings } from "lucide-react";
 
 const CLASS_COLORS = { healthy: '#00FF9F', fault: '#FFB800', attack: '#FF3B5C' };
 
-const CAUSAL_SIGNAL = [
-  { step: '1', node: 'order-svc',   event: 'CAP_SYS_ADMIN capability acquired (eBPF)', type: 'attack' as const },
-  { step: '2', node: 'order-svc',   event: 'Syscall rate spike: 8,400/s (2.1σ above baseline)', type: 'attack' as const },
-  { step: '3', node: 'postgres',    event: 'Memory pressure rising: RSS 3.8GB / 4GB limit', type: 'fault' as const },
-  { step: '4', node: 'postgres',    event: 'OOM Kill — kernel evicted postgres process', type: 'fault' as const },
-  { step: '5', node: 'order-svc',   event: 'TCP retransmit storm: 187 retransmits/s to postgres', type: 'fault' as const },
-  { step: '6', node: 'notify-svc',  event: 'Scheduler latency p99=142ms due to CPU contention', type: 'fault' as const },
-];
+// Removed fixed CAUSAL_SIGNAL - now using dynamic causalChain from backend
 
 export const IntelligenceTab: React.FC = () => {
-  const { inference, loading } = useGNN();
+  const { inference, loading, error } = useGNN();
 
-  if (loading) {
+  if (loading || !inference) {
     return (
       <div
         style={{
@@ -39,7 +32,7 @@ export const IntelligenceTab: React.FC = () => {
           >
             <Settings size={32} color="#22D3EE" />
           </div>
-          <div>Running GNN inference…</div>
+          <div>{error ? `Error: ${error}` : 'Running GNN inference…'}</div>
         </div>
       </div>
     );
@@ -137,9 +130,8 @@ export const IntelligenceTab: React.FC = () => {
           <div style={{ fontSize: 11, color: '#a3edf9ff', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 14 }}>
             Causal Chain (Pearl's do-calculus — eBPF evidence)
           </div>
-          {CAUSAL_SIGNAL.map((step, i) => {
-            const isAttack = step.type === 'attack';
-            const stepColor = isAttack ? '#FF3B5C' : '#FFB800';
+          {inference.causalChain && inference.causalChain.length > 0 ? inference.causalChain.map((item, i) => {
+            const stepColor = item.status === 'critical' ? '#FF3B5C' : item.status === 'warning' ? '#FFB800' : '#00FF9F';
             return (
               <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 12, alignItems: 'flex-start' }}>
                 {/* Step circle + connector */}
@@ -151,9 +143,9 @@ export const IntelligenceTab: React.FC = () => {
                     fontSize: 11, fontWeight: 700, color: stepColor,
                     fontFamily: 'JetBrains Mono, monospace',
                   }}>
-                    {step.step}
+                    {i + 1}
                   </div>
-                  {i < CAUSAL_SIGNAL.length - 1 && (
+                  {i < inference.causalChain.length - 1 && (
                     <div style={{ width: 2, height: 16, background: '#0D2244', marginTop: 2 }} />
                   )}
                 </div>
@@ -161,15 +153,24 @@ export const IntelligenceTab: React.FC = () => {
                 <div style={{ flex: 1, paddingTop: 4 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
                     <span style={{ fontSize: 11, fontWeight: 600, color: '#00D4FF', fontFamily: 'JetBrains Mono, monospace' }}>
-                      {step.node}
+                      {item.node}
                     </span>
-                    <GlowBadge severity={isAttack ? 'critical' : 'warning'} label={step.type} />
+                    <GlowBadge
+                      severity={item.status === 'critical' ? 'critical' : item.status === 'warning' ? 'warning' : 'info'}
+                      label={item.status}
+                    />
                   </div>
-                  <div style={{ fontSize: 12, color: '#fbf1feff', lineHeight: 1.4 }}>{step.event}</div>
+                  <div style={{ fontSize: 12, color: '#fbf1feff', lineHeight: 1.4 }}>
+                    Causal score: {(item.causalScore * 100).toFixed(1)}%
+                  </div>
                 </div>
               </div>
             );
-          })}
+          }) : (
+            <div style={{ fontSize: 12, color: '#4A6A8A', textAlign: 'center', padding: 20 }}>
+              No causal chain data available
+            </div>
+          )}
         </div>
 
         {/* Node classifications */}

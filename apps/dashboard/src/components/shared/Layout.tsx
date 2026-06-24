@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useClusterStore }  from '@/stores/useClusterStore';
 import { useIncidentStore } from '@/stores/useIncidentStore';
+import { useScenarioSync }  from '@/hooks/useScenarioSync';
 import { ToastContainer }   from './Toast';
 import type { LucideIcon } from "lucide-react";
 // Tab imports
@@ -194,6 +195,9 @@ export const Layout: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('topology');
   const { clock, setClock, alerts } = useClusterStore();
   const { unreadCount }            = useIncidentStore();
+
+  // Enable cross-layer scenario synchronization
+  useScenarioSync();
 
   // Live clock
   useEffect(() => {

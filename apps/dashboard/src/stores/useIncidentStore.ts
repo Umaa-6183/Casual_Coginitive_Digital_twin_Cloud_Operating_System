@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { Incident, Notification } from '@/types';
 
 const SEED_INCIDENTS: Incident[] = [
@@ -205,32 +206,52 @@ interface IncidentState {
 
   setSelected:    (inc: Incident | null) => void;
   setFilter:      (f: string) => void;
+  setIncidents:   (incs: Incident[]) => void;
   addIncident:    (inc: Incident) => void;
+  updateIncident: (id: string, updates: Partial<Incident>) => void;
   markAllRead:    () => void;
   markRead:       (id: number) => void;
 }
 
-export const useIncidentStore = create<IncidentState>((set, get) => ({
-  incidents:     SEED_INCIDENTS,
-  notifications: SEED_NOTIFICATIONS,
-  selected:      SEED_INCIDENTS[0],
-  statusFilter:  'all',
-  unreadCount:   SEED_NOTIFICATIONS.filter(n => !n.read).length,
+export const useIncidentStore = create<IncidentState>()(
+  persist(
+    (set, get) => ({
+      incidents:     SEED_INCIDENTS,
+      notifications: SEED_NOTIFICATIONS,
+      selected:      null,
+      statusFilter:  'all',
+      unreadCount:   SEED_NOTIFICATIONS.filter(n => !n.read).length,
 
-  setSelected: (selected) => set({ selected }),
-  setFilter:   (statusFilter) => set({ statusFilter }),
-  addIncident: (inc) =>
-    set(s => ({ incidents: [inc, ...s.incidents] })),
-  markAllRead: () =>
-    set(s => ({
-      notifications: s.notifications.map(n => ({ ...n, read: true })),
-      unreadCount:   0,
-    })),
-  markRead: (id) =>
-    set(s => {
-      const updated = s.notifications.map(n =>
-        n.id === id ? { ...n, read: true } : n,
-      );
-      return { notifications: updated, unreadCount: updated.filter(n => !n.read).length };
+      setSelected: (selected) => set({ selected }),
+      setFilter:   (statusFilter) => set({ statusFilter }),
+      setIncidents: (incidents) => set({ incidents }),
+      addIncident: (inc) =>
+        set(s => ({ incidents: [inc, ...s.incidents] })),
+      updateIncident: (id, updates) =>
+        set(s => ({
+          incidents: s.incidents.map(inc =>
+            inc.id === id ? { ...inc, ...updates } : inc
+          ),
+        })),
+      markAllRead: () =>
+        set(s => ({
+          notifications: s.notifications.map(n => ({ ...n, read: true })),
+          unreadCount:   0,
+        })),
+      markRead: (id) =>
+        set(s => {
+          const updated = s.notifications.map(n =>
+            n.id === id ? { ...n, read: true } : n,
+          );
+          return { notifications: updated, unreadCount: updated.filter(n => !n.read).length };
+        }),
     }),
-}));
+    {
+      name: 'ccdt-incident-storage',
+      partialize: (state) => ({
+        incidents: state.incidents,
+        notifications: state.notifications,
+      }),
+    }
+  )
+);

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import type { GhostAction, SimulationResult } from '@/types';
 import { showToast } from '@/components/shared/Toast';
+import { previewAction } from '@/api/client';
 
 interface Props {
   action:  GhostAction;
@@ -16,42 +17,6 @@ const PHASES: { id: Phase; label: string; ms: number }[] = [
   { id: 'validate', label: 'Evaluating OPA policies',           ms: 700  },
   { id: 'done',     label: 'Simulation complete',               ms: 0    },
 ];
-
-// Deterministic mock outcome based on action name
-function mockResult(action: GhostAction): SimulationResult {
-  const outcomes: Record<string, Partial<SimulationResult>> = {
-    isolate_container:    { mttrImpactPct: -65, trafficImpactPct: -2,  riskScore: 12, confidence: 0.92, opaStatus: 'PASS', projectedStatus: 'stable'   },
-    block_ip:             { mttrImpactPct: -55, trafficImpactPct: -1,  riskScore: 8,  confidence: 0.88, opaStatus: 'PASS', projectedStatus: 'stable'   },
-    restart_pod:          { mttrImpactPct: -40, trafficImpactPct: -8,  riskScore: 25, confidence: 0.81, opaStatus: 'PASS', projectedStatus: 'stable'   },
-    scale_up_replicas:    { mttrImpactPct: -30, trafficImpactPct: -3,  riskScore: 10, confidence: 0.85, opaStatus: 'PASS', projectedStatus: 'stable'   },
-    increase_memory_limit:{ mttrImpactPct: -45, trafficImpactPct: -5,  riskScore: 20, confidence: 0.79, opaStatus: 'PASS', projectedStatus: 'stable'   },
-    apply_network_policy: { mttrImpactPct: -50, trafficImpactPct: -4,  riskScore: 15, confidence: 0.87, opaStatus: 'PASS', projectedStatus: 'stable'   },
-    rollback_deployment:  { mttrImpactPct: -35, trafficImpactPct: -10, riskScore: 30, confidence: 0.77, opaStatus: 'PASS', projectedStatus: 'degraded' },
-    cordon_node:          { mttrImpactPct: -20, trafficImpactPct: 25,  riskScore: 60, confidence: 0.65, opaStatus: 'FAIL', projectedStatus: 'degraded' },
-  };
-
-  const base = outcomes[action.actionName] ?? {
-    mttrImpactPct: -30, trafficImpactPct: -5, riskScore: 20, confidence: 0.80,
-    opaStatus: 'PASS', projectedStatus: 'stable',
-  };
-
-  return {
-    mttrImpactPct:      base.mttrImpactPct!,
-    trafficImpactPct:   base.trafficImpactPct!,
-    collateralServices: base.riskScore! > 40 ? [action.targetNode] : [],
-    riskScore:          base.riskScore!,
-    confidence:         base.confidence!,
-    opaViolations:      base.opaStatus === 'FAIL' ? ['cpu_threshold: replica count too low'] : [],
-    projectedStatus:    base.projectedStatus!,
-    recommendation:     base.opaStatus === 'FAIL'
-      ? 'ACTION BLOCKED — OPA policy violation detected.'
-      : base.riskScore! < 20
-        ? 'SAFE TO EXECUTE — All policies passed. Low risk.'
-        : 'PROCEED WITH CAUTION — Review collateral impact.',
-    simDurationMs:      2800 + Math.random() * 400,
-    opaStatus:          base.opaStatus!,
-  };
-}
 
 const S = {
   overlay: {
@@ -91,23 +56,48 @@ const S = {
 export const GhostPreviewModal: React.FC<Props> = ({ action, onClose }) => {
   const [phase,  setPhase]  = useState<Phase>('init');
   const [result, setResult] = useState<SimulationResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Run phases sequentially
+  // Run phases sequentially and fetch preview from backend
   useEffect(() => {
     let cancelled = false;
 
     async function run() {
-      for (const p of PHASES) {
-        if (p.id === 'done') {
-          if (!cancelled) {
-            setPhase('done');
-            setResult(mockResult(action));
+      try {
+        for (const p of PHASES) {
+          if (cancelled) return;
+
+          if (p.id === 'done') {
+            // Fetch actual preview from backend
+            try {
+              const previewResult = await previewAction(
+                action.actionName,
+                action.targetNode,
+                'default',
+                action.parameters || {}
+              );
+              if (!cancelled) {
+                setPhase('done');
+                setResult(previewResult);
+              }
+            } catch (err) {
+              if (!cancelled) {
+                console.error('Ghost Preview API error:', err);
+                setError(err instanceof Error ? err.message : 'Preview failed');
+                setPhase('done');
+              }
+            }
+            break;
           }
-          break;
+
+          if (!cancelled) setPhase(p.id);
+          await new Promise<void>(res => setTimeout(res, p.ms));
         }
-        if (!cancelled) setPhase(p.id);
-        await new Promise<void>(res => setTimeout(res, p.ms));
-        if (cancelled) return;
+      } catch (err) {
+        if (!cancelled) {
+          console.error('Ghost Preview error:', err);
+          setError(err instanceof Error ? err.message : 'Preview failed');
+        }
       }
     }
     run();
@@ -116,10 +106,38 @@ export const GhostPreviewModal: React.FC<Props> = ({ action, onClose }) => {
 
   const phaseIndex = PHASES.findIndex(p => p.id === phase);
 
-  const handleApprove = useCallback(() => {
-    showToast(`Action '${action.label}' approved for execution`, 'info');
-    onClose();
-  }, [action.label, onClose]);
+  const [executing, setExecuting] = useState(false);
+
+  const handleApprove = useCallback(async () => {
+    setExecuting(true);
+    try {
+      showToast(`Executing action: ${action.label}`, 'info');
+
+      // Execute the action via API
+      const { executeAction } = await import('@/api/client');
+      const executeResult = await executeAction(
+        action.actionName,
+        action.targetNode,
+        'default',
+        action.parameters || {}
+      );
+
+      // Show success notification
+      showToast(`✅ ${action.label} executed successfully on ${action.targetNode}`, 'success');
+
+      // Log the result for debugging
+      console.log('Action execution result:', executeResult);
+
+      // Close modal after short delay to show success toast
+      setTimeout(() => {
+        onClose();
+      }, 1000);
+    } catch (err) {
+      console.error('Action execution failed:', err);
+      showToast(`❌ Failed to execute ${action.label}: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error');
+      setExecuting(false);
+    }
+  }, [action, onClose]);
 
   const handleCancel = useCallback(() => {
     onClose();
@@ -189,6 +207,16 @@ export const GhostPreviewModal: React.FC<Props> = ({ action, onClose }) => {
           </div>
 
           {/* Results — shown when done */}
+          {phase === 'done' && error && (
+            <div style={{
+              padding: '10px 14px', borderRadius: 8, marginBottom: 16,
+              background: '#FF3B5C11', border: '1px solid #FF3B5C44',
+            }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#FF3B5C' }}>
+                Error: {error}
+              </span>
+            </div>
+          )}
           {result && phase === 'done' && (
             <div style={{ animation: 'fadeSlideIn 0.3s ease' }}>
               {/* OPA status banner */}
@@ -248,17 +276,18 @@ export const GhostPreviewModal: React.FC<Props> = ({ action, onClose }) => {
           {result && (
             <button
               onClick={handleApprove}
-              disabled={result.opaStatus === 'FAIL'}
+              disabled={result.opaStatus === 'FAIL' || executing}
               style={{
-                background: result.opaStatus === 'FAIL' ? '#1A3A6A' : '#00D4FF',
+                background: result.opaStatus === 'FAIL' ? '#1A3A6A' : executing ? '#9B5DE5' : '#00D4FF',
                 border:     'none',
                 color:      result.opaStatus === 'FAIL' ? '#4A6A8A' : '#030810',
                 borderRadius: 8, padding: '8px 24px',
-                cursor: result.opaStatus === 'FAIL' ? 'not-allowed' : 'pointer',
+                cursor: result.opaStatus === 'FAIL' || executing ? 'not-allowed' : 'pointer',
                 fontSize: 13, fontWeight: 700,
+                opacity: executing ? 0.8 : 1,
               }}
             >
-              {result.opaStatus === 'FAIL' ? 'Blocked by OPA' : 'Approve & Execute'}
+              {result.opaStatus === 'FAIL' ? 'Blocked by OPA' : executing ? '⏳ Executing...' : 'Approve & Execute'}
             </button>
           )}
         </div>

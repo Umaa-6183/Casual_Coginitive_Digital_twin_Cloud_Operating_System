@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { GNNInference } from '@/types';
+import { fetchInference } from '@/api/client';
 
-// Simulated GNN inference data — replace with fetchInference() when backend is live
-const MOCK_INFERENCE: GNNInference = {
+// Fallback inference data when backend is offline
+const FALLBACK_INFERENCE: GNNInference = {
   nodeClassifications: {
     'api-gw':        { healthy: 0.91, fault: 0.06, attack: 0.03 },
     'auth-svc':      { healthy: 0.88, fault: 0.09, attack: 0.03 },
@@ -31,21 +32,48 @@ const MOCK_INFERENCE: GNNInference = {
 };
 
 export function useGNN() {
-  const [inference, setInference] = useState<GNNInference>(MOCK_INFERENCE);
-  const [loading,   setLoading]   = useState(false);
+  const [inference, setInference] = useState<GNNInference>(FALLBACK_INFERENCE);
+  const [loading,   setLoading]   = useState(true);
+  const [error,     setError]     = useState<string | null>(null);
 
-  // In production: call fetchInference() every 5s
   useEffect(() => {
-    // Simulate slight variation in scores
-    const interval = setInterval(() => {
-      setInference(prev => ({
-        ...prev,
-        inferenceMs:         +(7 + Math.random() * 5).toFixed(1),
-        rootCauseConfidence: +(0.91 + Math.random() * 0.05).toFixed(3),
-      }));
-    }, 5000);
-    return () => clearInterval(interval);
+    let mounted = true;
+
+    async function loadInference() {
+      try {
+        setError(null);
+        const data = await fetchInference();
+        if (mounted && data) {
+          console.log('GNN inference updated:', {
+            rootCause: data.rootCauseNode,
+            confidence: data.rootCauseConfidence,
+            incidentType: data.incidentType,
+            blastRadius: data.blastRadius.length
+          });
+          setInference(data);
+        }
+      } catch (err) {
+        if (mounted) {
+          console.warn('Backend inference unavailable, using fallback data:', err);
+          setError((err as Error).message);
+          // Keep using fallback data
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    // Load inference immediately and poll every 5s
+    loadInference();
+    const interval = setInterval(loadInference, 5000);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
-  return { inference, loading };
+  return { inference, loading, error };
 }
