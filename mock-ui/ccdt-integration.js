@@ -283,10 +283,10 @@ function showIncidentOverlay(incident) {
             <div class="section-label">Affected Services</div>
             <div class="section-content blast-radius">
                 ${normalizedIncident.affected && normalizedIncident.affected.length > 0
-                    ? (Array.isArray(normalizedIncident.affected)
-                        ? normalizedIncident.affected.map(s => `<span class="service-tag">${s}</span>`).join('')
-                        : normalizedIncident.affected.split(',').map(s => `<span class="service-tag">${s.trim()}</span>`).join(''))
-                    : '<span class="text-muted">Analyzing...</span>'}
+            ? (Array.isArray(normalizedIncident.affected)
+                ? normalizedIncident.affected.map(s => `<span class="service-tag">${s}</span>`).join('')
+                : normalizedIncident.affected.split(',').map(s => `<span class="service-tag">${s.trim()}</span>`).join(''))
+            : '<span class="text-muted">Analyzing...</span>'}
             </div>
         </div>
 
@@ -806,7 +806,7 @@ async function pollCCDTStatus() {
         CCDTState.activeIncident.action_taken = CCDTState.activeIncident.action_taken || 'throttle_source';
         showIncidentOverlay(CCDTState.activeIncident);
         updateCCDTStatusBar(topology, CCDTState.activeIncident);
-        
+
         setTimeout(hideIncidentOverlay, 5000);
         CCDTState.activeIncident = null;
     }
